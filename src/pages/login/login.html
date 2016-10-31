@@ -1,0 +1,13 @@
+<ion-header>
+	<ion-navbar>
+		<ion-title>
+			Login
+		</ion-title>
+	</ion-navbar>
+</ion-header>
+
+<ion-content padding>
+	<button ion-button *ngIf="!(isAuthenticated | asyncState)" (click)="login()" >LOGIN</button>
+	<button ion-button *ngIf="(isAuthenticated | asyncState)" (click)="logout()" >LOGOUT</button>
+  <pre>{{currentUser | asyncState | json}}</pre>
+</ion-content>
