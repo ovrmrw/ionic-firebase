@@ -7,7 +7,7 @@
 </ion-header>
 
 <ion-content padding>
-	<button ion-button *ngIf="!(isAuthenticated | asyncState)" (click)="login()" >LOGIN</button>
-	<button ion-button *ngIf="(isAuthenticated | asyncState)" (click)="logout()" >LOGOUT</button>
-  <pre>{{currentUser | asyncState | json}}</pre>
+	<button ion-button *ngIf="!isAuthenticated" (click)="login()" >LOGIN</button>
+	<button ion-button *ngIf="isAuthenticated" (click)="logout()" >LOGOUT</button>
+  <pre>{{currentUser | json}}</pre>
 </ion-content>

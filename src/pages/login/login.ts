@@ -10,6 +10,9 @@ import { AuthService, LoginState } from './auth.service';
   templateUrl: 'login.html'
 })
 export class LoginPage implements OnInit {
+  isAuthenticated: boolean;
+  currentUser: firebase.User | null;
+
 
   constructor(
     public navCtrl: NavController,
@@ -19,7 +22,13 @@ export class LoginPage implements OnInit {
   ) { }
 
 
-  ngOnInit() { }
+  ngOnInit() { 
+    this.auth.loginState$.subscribe(state => {
+      this.isAuthenticated = state.isAuthenticated;
+      this.currentUser = state.currentUser;
+      this.cd.detectChanges();
+    });
+  }
 
 
   login(): void {
@@ -42,12 +51,12 @@ export class LoginPage implements OnInit {
     return this.auth.loginState$;
   }
 
-  get isAuthenticated(): Observable<boolean> {
-    return this.loginState.map(s => s.isAuthenticated);
-  }
+  // get isAuthenticated(): Observable<boolean> {
+  //   return this.loginState.map(s => s.isAuthenticated);
+  // }
 
-  get currentUser(): Observable<firebase.User | null> {
-    return this.loginState.map(s => s.currentUser);
-  }
+  // get currentUser(): Observable<firebase.User | null> {
+  //   return this.loginState.map(s => s.currentUser);
+  // }
 
 }
