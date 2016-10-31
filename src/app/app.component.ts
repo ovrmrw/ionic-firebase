@@ -1,4 +1,4 @@
-import { Component,ChangeDetectorRef } from '@angular/core';
+import { Component, ChangeDetectorRef } from '@angular/core';
 import { Platform } from 'ionic-angular';
 import { StatusBar, Splashscreen } from 'ionic-native';
 import firebase from 'firebase';
@@ -12,15 +12,17 @@ import { AuthService } from '../pages/login/auth.service';
   template: `<ion-nav [root]="rootPage"></ion-nav>`
 })
 export class MyApp {
-  rootPage: any = TabsPage;
+  // rootPage: any = TabsPage;
+  rootPage: any;
 
-  constructor(platform: Platform, public auth: AuthService,public cd:ChangeDetectorRef) {
+  constructor(platform: Platform, public auth: AuthService, public cd: ChangeDetectorRef) {
 
     platform.ready().then(() => {
+
       this.auth.loginState$.subscribe(state => {
         if (state.isAuthenticated) {
           this.rootPage = TabsPage;
-          this.cd.detectChanges();          
+          this.cd.detectChanges();
         } else {
           this.rootPage = LoginPage;
           this.cd.detectChanges();
