@@ -43,9 +43,9 @@ var rollupConfig = {
         'node_modules/firebase/**',
         'node_modules/lodash/**'
       ],
-      namedExports: {
-        'node_modules/firebase/firebase.js': ['initializeApp', 'auth', 'database']
-      }
+      // namedExports: {
+      //   'node_modules/firebase/firebase.js': ['initializeApp', 'auth', 'database']
+      // }
     }),
     nodeResolve({
       module: true,

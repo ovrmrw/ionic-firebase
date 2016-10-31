@@ -42055,9 +42055,12 @@ var Config = (function () {
                                 isDefined(platformModeValue) ? platformModeValue :
                                     null;
         }
-        var rtnVal = this._c[key];
-        if (isFunction$1(rtnVal)) {
-            rtnVal = rtnVal(this.platform);
+        var rtnVal;
+        if (isFunction$1(this._c[key])) {
+            rtnVal = this._c[key](this.platform);
+        }
+        else {
+            rtnVal = this._c[key];
         }
         return (rtnVal !== null ? rtnVal : fallbackValue);
     };
@@ -42210,7 +42213,6 @@ var ViewController = (function () {
     function ViewController(component, data, rootCssClass) {
         if (rootCssClass === void 0) { rootCssClass = DEFAULT_CSS_CLASS; }
         this.component = component;
-        this._isHidden = false;
         this.isOverlay = false;
         this._emitter = new EventEmitter();
         this.data = (data instanceof NavParams ? data.data : (isPresent$7(data) ? data : {}));
@@ -42238,6 +42240,10 @@ var ViewController = (function () {
     ViewController.prototype.emit = function (data) {
         this._emitter.emit(data);
     };
+    ViewController.prototype.onDismiss = function (callback) {
+        console.warn('onDismiss(..) has been deprecated. Please use onDidDismiss(..) instead');
+        this.onDidDismiss(callback);
+    };
     ViewController.prototype.onDidDismiss = function (callback) {
         this._onDidDismiss = callback;
     };
@@ -42247,10 +42253,7 @@ var ViewController = (function () {
     ViewController.prototype.dismiss = function (data, role, navOptions) {
         var _this = this;
         if (navOptions === void 0) { navOptions = {}; }
-        if (!this._nav) {
-            return Promise.resolve(false);
-        }
-        var options = assign({}, this._leavingOpts, navOptions);
+        var options = merge$1({}, this._leavingOpts, navOptions);
         this._onWillDismiss && this._onWillDismiss(data, role);
         return this._nav.remove(this._nav.indexOf(this), 1, options).then(function () {
             _this._onDidDismiss && _this._onDidDismiss(data, role);
@@ -42299,10 +42302,9 @@ var ViewController = (function () {
     };
     ViewController.prototype._domShow = function (shouldShow, renderer) {
         if (this._cmp) {
-            if (shouldShow === this._isHidden) {
-                this._isHidden = !shouldShow;
-                var value = (shouldShow ? null : '');
-                renderer.setElementAttribute(this.pageRef().nativeElement, 'hidden', value);
+            if (shouldShow && this._hidden === '' || !shouldShow && this._hidden !== '') {
+                this._hidden = (shouldShow ? null : '');
+                renderer.setElementAttribute(this.pageRef().nativeElement, 'hidden', this._hidden);
             }
         }
     };
@@ -42359,11 +42361,17 @@ var ViewController = (function () {
             this._nb.hideBackButton = !shouldShow;
         }
     };
-    ViewController.prototype._willLoad = function () {
-        this._lifecycle('WillLoad');
-    };
     ViewController.prototype._didLoad = function () {
-        this._lifecycle('DidLoad');
+        if (this.instance && this.instance.ionViewLoaded) {
+            try {
+                console.warn('ionViewLoaded() has been deprecated. Please rename to ionViewDidLoad()');
+                this.instance.ionViewLoaded();
+            }
+            catch (e) {
+                console.error(this.name + ' iionViewLoaded: ' + e.message);
+            }
+        }
+        ctrlFn(this, 'DidLoad');
     };
     ViewController.prototype._willEnter = function () {
         if (this._detached && this._cmp) {
@@ -42371,20 +42379,20 @@ var ViewController = (function () {
             this._detached = false;
         }
         this.willEnter.emit(null);
-        this._lifecycle('WillEnter');
+        ctrlFn(this, 'WillEnter');
     };
     ViewController.prototype._didEnter = function () {
         this._nb && this._nb.didEnter();
         this.didEnter.emit(null);
-        this._lifecycle('DidEnter');
+        ctrlFn(this, 'DidEnter');
     };
     ViewController.prototype._willLeave = function () {
         this.willLeave.emit(null);
-        this._lifecycle('WillLeave');
+        ctrlFn(this, 'WillLeave');
     };
     ViewController.prototype._didLeave = function () {
         this.didLeave.emit(null);
-        this._lifecycle('DidLeave');
+        ctrlFn(this, 'DidLeave');
         if (!this._detached && this._cmp) {
             this._cmp.changeDetectorRef.detach();
             this._detached = true;
@@ -42392,14 +42400,22 @@ var ViewController = (function () {
     };
     ViewController.prototype._willUnload = function () {
         this.willUnload.emit(null);
-        this._lifecycle('WillUnload');
+        ctrlFn(this, 'WillUnload');
+        if (this.instance && this.instance.ionViewDidUnload) {
+            console.warn('ionViewDidUnload() has been deprecated. Please use ionViewWillUnload() instead');
+            try {
+                this.instance.ionViewDidUnload();
+            }
+            catch (e) {
+                console.error(this.name + ' ionViewDidUnload: ' + e.message);
+            }
+        }
     };
     ViewController.prototype._destroy = function (renderer) {
         if (this._cmp) {
             if (renderer) {
-                var cmpEle = this._cmp.location.nativeElement;
-                renderer.setElementAttribute(cmpEle, 'class', null);
-                renderer.setElementAttribute(cmpEle, 'style', null);
+                renderer.setElementAttribute(this._cmp.location.nativeElement, 'class', null);
+                renderer.setElementAttribute(this._cmp.location.nativeElement, 'style', null);
             }
             this._cmp.destroy();
         }
@@ -42412,36 +42428,35 @@ var ViewController = (function () {
         this._nav = this._cmp = this.instance = this._cntDir = this._cntRef = this._hdrDir = this._ftrDir = this._nb = this._onWillDismiss = null;
     };
     ViewController.prototype._lifecycleTest = function (lifecycle) {
-        var instance = this.instance;
-        var methodName = 'ionViewCan' + lifecycle;
-        if (instance && instance[methodName]) {
+        var result = true;
+        if (this.instance && this.instance['ionViewCan' + lifecycle]) {
             try {
-                return instance[methodName]();
+                result = this.instance['ionViewCan' + lifecycle]();
             }
             catch (e) {
-                console.error(this.name + " " + methodName + " error: " + e.message);
-                return false;
+                console.error(this.name + " ionViewCan" + lifecycle + " error: " + e);
+                result = false;
             }
         }
-        return true;
-    };
-    ViewController.prototype._lifecycle = function (lifecycle) {
-        var instance = this.instance;
-        var methodName = 'ionView' + lifecycle;
-        if (instance && instance[methodName]) {
-            try {
-                instance[methodName]();
-            }
-            catch (e) {
-                console.error(this.name + " " + methodName + " error: " + e.message);
-            }
-        }
+        return result;
     };
     ViewController.propDecorators = {
         '_emitter': [{ type: Output },],
     };
     return ViewController;
 }());
+function ctrlFn(viewCtrl, fnName) {
+    if (viewCtrl.instance) {
+        if (viewCtrl.instance['ionView' + fnName]) {
+            try {
+                viewCtrl.instance['ionView' + fnName]();
+            }
+            catch (e) {
+                console.error(viewCtrl.name + ' ionView' + fnName + ': ' + e.message);
+            }
+        }
+    }
+}
 function isViewController(viewCtrl) {
     return !!(viewCtrl && viewCtrl._didLoad && viewCtrl._willUnload);
 }
@@ -42733,7 +42748,6 @@ var CSS = {};
     CSS.transitionDelay = (isWebkit ? '-webkit-' : '') + 'transition-delay';
     CSS.transitionEnd = (isWebkit ? 'webkitTransitionEnd ' : '') + 'transitionend';
     CSS.transformOrigin = (isWebkit ? '-webkit-' : '') + 'transform-origin';
-    CSS.animationDelay = (isWebkit ? 'webkitAnimationDelay' : 'animationDelay');
 })();
 function transitionEnd(el, callback) {
     if (el) {
@@ -43394,6 +43408,9 @@ var ActionSheet = (function (_super) {
         if (navOptions === void 0) { navOptions = {}; }
         return this._app.present(this, navOptions);
     };
+    ActionSheet.create = function (opt) {
+        console.warn('ActionSheet.create(..) has been deprecated. Please inject ActionSheetController instead');
+    };
     return ActionSheet;
 }(ViewController));
 var ActionSheetController = (function () {
@@ -43674,6 +43691,9 @@ var Alert = (function (_super) {
         if (navOptions === void 0) { navOptions = {}; }
         return this._app.present(this, navOptions);
     };
+    Alert.create = function (opt) {
+        console.warn('Alert.create(..) has been deprecated. Please inject AlertController instead');
+    };
     return Alert;
 }(ViewController));
 var AlertController = (function () {
@@ -43694,20 +43714,20 @@ var AlertController = (function () {
 }());
 
 var DeepLinker = (function () {
-    function DeepLinker(_app, _serializer, _location) {
-        this._app = _app;
-        this._serializer = _serializer;
-        this._location = _location;
+    function DeepLinker(app, serializer, location) {
+        this.app = app;
+        this.serializer = serializer;
+        this.location = location;
         this.segments = [];
         this.history = [];
     }
     DeepLinker.prototype.init = function () {
         var _this = this;
-        var browserUrl = normalizeUrl(this._location.path());
+        var browserUrl = normalizeUrl(this.location.path());
         // console.debug("DeepLinker, init load: " + browserUrl);
-        this.segments = this._serializer.parse(browserUrl);
+        this.segments = this.serializer.parse(browserUrl);
         this.historyPush(browserUrl);
-        this._location.subscribe(function (locationChg) {
+        this.location.subscribe(function (locationChg) {
             _this.urlChange(normalizeUrl(locationChg.url));
         });
     };
@@ -43721,7 +43741,7 @@ var DeepLinker = (function () {
                 // console.debug("DeepLinker, browser urlChange, forward to: " + browserUrl);
                 this.historyPush(browserUrl);
             }
-            var appRootNav = this._app.getRootNav();
+            var appRootNav = this.app.getRootNav();
             if (appRootNav) {
                 if (browserUrl === '/') {
                     if (isPresent$7(this.indexAliasUrl)) {
@@ -43735,17 +43755,17 @@ var DeepLinker = (function () {
                         return;
                     }
                 }
-                this.segments = this._serializer.parse(browserUrl);
+                this.segments = this.serializer.parse(browserUrl);
                 this.loadNavFromPath(appRootNav);
             }
         }
     };
     DeepLinker.prototype.navChange = function (direction) {
         if (direction) {
-            var activeNav = this._app.getActiveNav();
+            var activeNav = this.app.getActiveNav();
             if (activeNav) {
                 this.segments = this.pathFromNavs(activeNav);
-                var browserUrl = this._serializer.serialize(this.segments);
+                var browserUrl = this.serializer.serialize(this.segments);
                 this.updateLocation(browserUrl, direction);
             }
         }
@@ -43757,16 +43777,16 @@ var DeepLinker = (function () {
         if (direction === DIRECTION_BACK && this.isBackUrl(browserUrl)) {
             // console.debug("DeepLinker, location.back(), url: '" + browserUrl + "'");
             this.historyPop();
-            this._location.back();
+            this.location.back();
         }
         else if (!this.isCurrentUrl(browserUrl)) {
             // console.debug("DeepLinker, location.go('" + browserUrl + "')");
             this.historyPush(browserUrl);
-            this._location.go(browserUrl);
+            this.location.go(browserUrl);
         }
     };
     DeepLinker.prototype.getComponentFromName = function (componentName) {
-        var segment = this._serializer.createSegmentFromName(componentName);
+        var segment = this.serializer.createSegmentFromName(componentName);
         if (segment && segment.component) {
             return segment.component;
         }
@@ -43774,11 +43794,11 @@ var DeepLinker = (function () {
     };
     DeepLinker.prototype.createUrl = function (nav, nameOrComponent, data, prepareExternalUrl) {
         if (prepareExternalUrl === void 0) { prepareExternalUrl = true; }
-        var segment = this._serializer.createSegmentFromName(nameOrComponent);
+        var segment = this.serializer.createSegmentFromName(nameOrComponent);
         if (segment) {
             var path = this.pathFromNavs(nav, segment.component, data);
-            var url = this._serializer.serialize(path);
-            return prepareExternalUrl ? this._location.prepareExternalUrl(url) : url;
+            var url = this.serializer.serialize(path);
+            return prepareExternalUrl ? this.location.prepareExternalUrl(url) : url;
         }
         return '';
     };
@@ -43795,7 +43815,7 @@ var DeepLinker = (function () {
                     data = view.data;
                 }
             }
-            segment = this._serializer.serializeComponent(component, data);
+            segment = this.serializer.serializeComponent(component, data);
             component = data = null;
             if (!segment) {
                 break;
@@ -43822,7 +43842,7 @@ var DeepLinker = (function () {
             return tab.tabUrlPath;
         }
         if (isPresent$7(tab.tabTitle)) {
-            return this._serializer.formatUrlPart(tab.tabTitle);
+            return this.serializer.formatUrlPart(tab.tabTitle);
         }
         return "tab-" + tab.index;
     };
@@ -43835,7 +43855,7 @@ var DeepLinker = (function () {
         }
         var tab = tabsNav._tabs.find(function (t) {
             return (isPresent$7(t.tabUrlPath) && t.tabUrlPath === pathName) ||
-                (isPresent$7(t.tabTitle) && _this._serializer.formatUrlPart(t.tabTitle) === pathName);
+                (isPresent$7(t.tabTitle) && _this.serializer.formatUrlPart(t.tabTitle) === pathName);
         });
         return isPresent$7(tab) ? tab.index : fallbackIndex;
     };
@@ -43932,7 +43952,7 @@ var DeepLinker = (function () {
     DeepLinker.prototype.historyPop = function () {
         this.history.pop();
         if (!this.history.length) {
-            this.historyPush(this._location.path());
+            this.historyPush(this.location.path());
         }
     };
     return DeepLinker;
@@ -44138,7 +44158,6 @@ var Events = (function () {
         });
     };
     Events.prototype.unsubscribe = function (topic, handler) {
-        if (handler === void 0) { handler = null; }
         var t = this._channels[topic];
         if (!t) {
             return false;
@@ -44382,61 +44401,6 @@ var GestureDelegate = (function () {
         this.controller = null;
     };
     return GestureDelegate;
-}());
-
-var Haptic = (function () {
-    function Haptic(platform) {
-        var _this = this;
-        platform.ready().then(function () {
-            _this.plugin = window.TapticEngine;
-        });
-    }
-    Haptic.prototype.available = function () {
-        return !!this.plugin;
-    };
-    Haptic.prototype.selection = function () {
-        if (!this.plugin) {
-            return;
-        }
-        this.plugin.selection();
-    };
-    Haptic.prototype.gestureSelectionStart = function () {
-        if (!this.plugin) {
-            return;
-        }
-        this.plugin.gestureSelectionStart();
-    };
-    Haptic.prototype.gestureSelectionChanged = function () {
-        if (!this.plugin) {
-            return;
-        }
-        this.plugin.gestureSelectionChanged();
-    };
-    Haptic.prototype.gestureSelectionEnd = function () {
-        if (!this.plugin) {
-            return;
-        }
-        this.plugin.gestureSelectionEnd();
-    };
-    Haptic.prototype.notification = function (options) {
-        if (!this.plugin) {
-            return;
-        }
-        this.plugin.notification(options);
-    };
-    Haptic.prototype.impact = function (options) {
-        if (!this.plugin) {
-            return;
-        }
-        this.plugin.impact(options);
-    };
-    Haptic.decorators = [
-        { type: Injectable },
-    ];
-    Haptic.ctorParameters = [
-        { type: Platform, },
-    ];
-    return Haptic;
 }());
 
 var __extends$82 = (undefined && undefined.__extends) || function (d, b) {
@@ -44817,7 +44781,7 @@ var UIEventManager = (function () {
     return UIEventManager;
 }());
 function listenEvent(ele, eventName, zoneWrapped, option, callback) {
-    var rawEvent = (!zoneWrapped && '__zone_symbol__addEventListener' in ele);
+    var rawEvent = ('__zone_symbol__addEventListener' in ele && !zoneWrapped);
     if (rawEvent) {
         ele.__zone_symbol__addEventListener(eventName, callback, option);
         return function () { return ele.__zone_symbol__removeEventListener(eventName, callback); };
@@ -45091,9 +45055,7 @@ var NavControllerBase = (function (_super) {
     __extends$86(NavControllerBase, _super);
     function NavControllerBase(parent, _app, config, _keyboard, elementRef, _zone, renderer, _cfr, _gestureCtrl, _trnsCtrl, _linker) {
         _super.call(this, config, elementRef, renderer);
-        this.parent = parent;
         this._app = _app;
-        this.config = config;
         this._keyboard = _keyboard;
         this._zone = _zone;
         this._cfr = _cfr;
@@ -45107,15 +45069,17 @@ var NavControllerBase = (function (_super) {
         this._trnsId = null;
         this._trnsTm = 0;
         this._views = [];
+        this.parent = parent;
+        this.config = config;
+        this._sbEnabled = config.getBoolean('swipeBackEnabled');
+        this._sbThreshold = config.getNumber('swipeBackThreshold', 40);
+        this.id = 'n' + (++ctrlIds);
         this.viewDidLoad = new EventEmitter();
         this.viewWillEnter = new EventEmitter();
         this.viewDidEnter = new EventEmitter();
         this.viewWillLeave = new EventEmitter();
         this.viewDidLeave = new EventEmitter();
         this.viewWillUnload = new EventEmitter();
-        this._sbEnabled = config.getBoolean('swipeBackEnabled');
-        this._sbThreshold = config.getNumber('swipeBackThreshold', 40);
-        this.id = 'n' + (++ctrlIds);
     }
     NavControllerBase.prototype.push = function (page, params, opts, done) {
         return this._queueTrns({
@@ -45210,14 +45174,13 @@ var NavControllerBase = (function (_super) {
             });
         }
         ti.resolve = function (hasCompleted, isAsync, enteringName, leavingName, direction) {
-            _this.setTransitioning(false);
             _this._trnsId = null;
             resolve && resolve(hasCompleted, isAsync, enteringName, leavingName, direction);
             _this._sbCheck();
+            _this.setTransitioning(false);
             _this._nextTrns();
         };
         ti.reject = function (rejectReason, trns) {
-            _this.setTransitioning(false);
             _this._trnsId = null;
             _this._queue.length = 0;
             while (trns) {
@@ -45232,6 +45195,7 @@ var NavControllerBase = (function (_super) {
             }
             _this._sbCheck();
             reject && reject(false, false, rejectReason);
+            _this.setTransitioning(false);
             _this._nextTrns();
         };
         if (ti.insertViews) {
@@ -45253,30 +45217,24 @@ var NavControllerBase = (function (_super) {
         if (this.isTransitioning()) {
             return false;
         }
-        var ti = this._nextTI();
-        if (!ti) {
-            return false;
-        }
-        var leavingView = this.getActive();
-        var enteringView = this._getEnteringView(ti, leavingView);
-        if (enteringView && isBlank$7(enteringView._state)) {
-            this._viewInit(enteringView);
-        }
-        var requiresTransition = (ti.enteringRequiresTransition || ti.leavingRequiresTransition) && enteringView !== leavingView;
-        if (requiresTransition) {
-            return this._viewTest(enteringView, leavingView, ti);
-        }
-        else {
-            this._postViewInit(enteringView, leavingView, ti, ti.resolve);
-            return true;
-        }
-    };
-    NavControllerBase.prototype._nextTI = function () {
         var ti = this._queue.shift();
         if (!ti) {
-            return null;
+            this.setTransitioning(false);
+            return false;
         }
+        this.setTransitioning(true, ACTIVE_TRANSITION_MAX_TIME);
         var viewsLength = this._views.length;
+        var activeView = this.getActive();
+        var enteringView;
+        var leavingView = activeView;
+        var destroyQueue = [];
+        var opts = ti.opts || {};
+        var resolve = ti.resolve;
+        var reject = ti.reject;
+        var insertViews = ti.insertViews;
+        ti.resolve = ti.reject = ti.opts = ti.insertViews = null;
+        var enteringRequiresTransition = false;
+        var leavingRequiresTransition = false;
         if (isPresent$7(ti.removeStart)) {
             if (ti.removeStart < 0) {
                 ti.removeStart = (viewsLength - 1);
@@ -45284,46 +45242,25 @@ var NavControllerBase = (function (_super) {
             if (ti.removeCount < 0) {
                 ti.removeCount = (viewsLength - ti.removeStart);
             }
-            ti.leavingRequiresTransition = ((ti.removeStart + ti.removeCount) === viewsLength);
-        }
-        if (ti.insertViews) {
-            if (ti.insertStart < 0 || ti.insertStart > viewsLength) {
-                ti.insertStart = viewsLength;
+            leavingRequiresTransition = (ti.removeStart + ti.removeCount === viewsLength);
+            for (var i = ti.removeStart; i <= ti.removeCount; i++) {
+                destroyQueue.push(this._views[i]);
             }
-            ti.enteringRequiresTransition = (ti.insertStart === viewsLength);
-        }
-        return ti;
-    };
-    NavControllerBase.prototype._getEnteringView = function (ti, leavingView) {
-        var insertViews = ti.insertViews;
-        if (insertViews) {
-            return insertViews[insertViews.length - 1];
-        }
-        var removeStart = ti.removeStart;
-        if (isPresent$7(removeStart)) {
-            var views = this._views;
-            var removeEnd = removeStart + ti.removeCount;
-            for (var i = views.length - 1; i >= 0; i--) {
-                var view = views[i];
-                if ((i < removeStart || i >= removeEnd) && view !== leavingView) {
-                    return view;
+            for (var i = viewsLength - 1; i >= 0; i--) {
+                var view = this._views[i];
+                if (destroyQueue.indexOf(view) < 0 && view !== leavingView) {
+                    enteringView = view;
+                    break;
                 }
-            }
-        }
-        return null;
-    };
-    NavControllerBase.prototype._postViewInit = function (enteringView, leavingView, ti, resolve) {
-        var opts = ti.opts || {};
-        var insertViews = ti.insertViews;
-        var removeStart = ti.removeStart;
-        var destroyQueue = [];
-        if (isPresent$7(removeStart)) {
-            for (var i = 0; i < ti.removeCount; i++) {
-                destroyQueue.push(this._views[i + removeStart]);
             }
             opts.direction = opts.direction || DIRECTION_BACK;
         }
         if (insertViews) {
+            if (ti.insertStart < 0 || ti.insertStart > viewsLength) {
+                ti.insertStart = viewsLength;
+            }
+            enteringRequiresTransition = (ti.insertStart === viewsLength);
+            enteringView = insertViews[insertViews.length - 1];
             if (isPresent$7(opts.id)) {
                 enteringView.id = opts.id;
             }
@@ -45339,16 +45276,22 @@ var NavControllerBase = (function (_super) {
                     this._views.splice(ti.insertStart + i, 0, view);
                 }
             }
-            if (ti.enteringRequiresTransition) {
+            if (enteringRequiresTransition) {
                 opts.direction = opts.direction || DIRECTION_FORWARD;
             }
         }
         for (var i = 0; i < destroyQueue.length; i++) {
             var view = destroyQueue[i];
             if (view && view !== enteringView && view !== leavingView) {
-                this._willLeave(view);
-                this._didLeave(view);
-                this._willUnload(view);
+                view._willLeave();
+                this.viewWillLeave.emit(view);
+                this._app.viewWillLeave.emit(view);
+                view._didLeave();
+                this.viewDidLeave.emit(view);
+                this._app.viewDidLeave.emit(view);
+                view._willUnload();
+                this.viewWillUnload.emit(view);
+                this._app.viewWillUnload.emit(view);
             }
         }
         for (var i = 0; i < destroyQueue.length; i++) {
@@ -45358,7 +45301,7 @@ var NavControllerBase = (function (_super) {
             }
         }
         destroyQueue.length = 0;
-        if (ti.enteringRequiresTransition || ti.leavingRequiresTransition && enteringView !== leavingView) {
+        if (enteringRequiresTransition || leavingRequiresTransition && enteringView !== leavingView) {
             if (!opts.animation) {
                 if (isPresent$7(ti.removeStart)) {
                     opts.animation = (leavingView || enteringView).getTransitionName(opts.direction);
@@ -45367,63 +45310,14 @@ var NavControllerBase = (function (_super) {
                     opts.animation = (enteringView || leavingView).getTransitionName(opts.direction);
                 }
             }
-            this._transition(enteringView, leavingView, opts, resolve);
+            this._transition(enteringView, leavingView, opts, resolve, reject);
         }
         else {
             resolve(true, false);
         }
-    };
-    NavControllerBase.prototype._viewInit = function (enteringView) {
-        var componentProviders = ReflectiveInjector.resolve([
-            { provide: NavController, useValue: this },
-            { provide: ViewController, useValue: enteringView },
-            { provide: NavParams, useValue: enteringView.getNavParams() }
-        ]);
-        var componentFactory = this._cfr.resolveComponentFactory(enteringView.component);
-        var childInjector = ReflectiveInjector.fromResolvedProviders(componentProviders, this._viewport.parentInjector);
-        enteringView.init(componentFactory.create(childInjector, []));
-        enteringView._state = ViewState.INITIALIZED;
-        this._willLoad(enteringView);
-    };
-    NavControllerBase.prototype._viewTest = function (enteringView, leavingView, ti) {
-        var _this = this;
-        var promises = [];
-        var reject = ti.reject;
-        var resolve = ti.resolve;
-        if (leavingView) {
-            var leavingTestResult = leavingView._lifecycleTest('Leave');
-            if (isPresent$7(leavingTestResult) && leavingTestResult !== true) {
-                if (leavingTestResult instanceof Promise) {
-                    promises.push(leavingTestResult);
-                }
-                else {
-                    reject((leavingTestResult !== false ? leavingTestResult : "ionViewCanLeave rejected"));
-                    return false;
-                }
-            }
-        }
-        if (enteringView) {
-            var enteringTestResult = enteringView._lifecycleTest('Enter');
-            if (isPresent$7(enteringTestResult) && enteringTestResult !== true) {
-                if (enteringTestResult instanceof Promise) {
-                    promises.push(enteringTestResult);
-                }
-                else {
-                    reject((enteringTestResult !== false ? enteringTestResult : "ionViewCanEnter rejected"));
-                    return false;
-                }
-            }
-        }
-        if (promises.length) {
-            Promise.all(promises).then(function () {
-                _this._postViewInit(enteringView, leavingView, ti, resolve);
-            }).catch(reject);
-            return true;
-        }
-        this._postViewInit(enteringView, leavingView, ti, resolve);
         return true;
     };
-    NavControllerBase.prototype._transition = function (enteringView, leavingView, opts, resolve) {
+    NavControllerBase.prototype._transition = function (enteringView, leavingView, opts, resolve, reject) {
         var _this = this;
         this._trnsId = this._trnsCtrl.getRootTrnsId(this);
         if (this._trnsId === null) {
@@ -45453,6 +45347,65 @@ var NavControllerBase = (function (_super) {
                 trns.parent.start();
             }
         });
+        if (enteringView && isBlank$7(enteringView._state)) {
+            this._viewInit(trns, enteringView, opts);
+        }
+        var shouldContinue = this._viewTest(trns, enteringView, leavingView, opts, resolve, reject);
+        if (shouldContinue) {
+            this._postViewInit(trns, enteringView, leavingView, opts, resolve);
+        }
+    };
+    NavControllerBase.prototype._viewInit = function (trns, enteringView, opts) {
+        var componentProviders = ReflectiveInjector.resolve([
+            { provide: NavController, useValue: this },
+            { provide: ViewController, useValue: enteringView },
+            { provide: NavParams, useValue: enteringView.getNavParams() }
+        ]);
+        var componentFactory = this._cfr.resolveComponentFactory(enteringView.component);
+        var childInjector = ReflectiveInjector.fromResolvedProviders(componentProviders, this._viewport.parentInjector);
+        enteringView.init(componentFactory.create(childInjector, []));
+        enteringView._state = ViewState.INITIALIZED;
+    };
+    NavControllerBase.prototype._viewTest = function (trns, enteringView, leavingView, opts, resolve, reject) {
+        var _this = this;
+        var promises = [];
+        if (leavingView) {
+            var leavingTestResult = leavingView._lifecycleTest('Leave');
+            if (isPresent$7(leavingTestResult) && leavingTestResult !== true) {
+                if (leavingTestResult instanceof Promise) {
+                    promises.push(leavingTestResult);
+                }
+                else {
+                    reject((leavingTestResult !== false ? leavingTestResult : "ionViewCanLeave rejected"), trns);
+                    return false;
+                }
+            }
+        }
+        if (enteringView) {
+            var enteringTestResult = enteringView._lifecycleTest('Enter');
+            if (isPresent$7(enteringTestResult) && enteringTestResult !== true) {
+                if (enteringTestResult instanceof Promise) {
+                    promises.push(enteringTestResult);
+                }
+                else {
+                    reject((enteringTestResult !== false ? enteringTestResult : "ionViewCanEnter rejected"), trns);
+                    return false;
+                }
+            }
+        }
+        if (promises.length) {
+            Promise.all(promises).then(function () {
+                _this._postViewInit(trns, enteringView, leavingView, opts, resolve);
+            }, function (rejectReason) {
+                reject(rejectReason, trns);
+            }).catch(function (rejectReason) {
+                reject(rejectReason, trns);
+            });
+            return false;
+        }
+        return true;
+    };
+    NavControllerBase.prototype._postViewInit = function (trns, enteringView, leavingView, opts, resolve) {
         if (enteringView && enteringView._state === ViewState.INITIALIZED) {
             this._viewInsert(enteringView, enteringView._cmp, this._viewport);
         }
@@ -45461,11 +45414,13 @@ var NavControllerBase = (function (_super) {
         }
     };
     NavControllerBase.prototype._viewInsert = function (view, componentRef, viewport) {
-        this._didLoad(view);
+        view._didLoad();
+        this.viewDidLoad.emit(view);
+        this._app.viewDidLoad.emit(view);
         viewport.insert(componentRef.hostView, viewport.length);
         view._state = ViewState.PRE_RENDERED;
+        var pageElement = componentRef.location.nativeElement;
         if (view._cssClass) {
-            var pageElement = componentRef.location.nativeElement;
             this._renderer.setElementClass(pageElement, view._cssClass, true);
         }
         componentRef.changeDetectorRef.detectChanges();
@@ -45506,8 +45461,16 @@ var NavControllerBase = (function (_super) {
         }
     };
     NavControllerBase.prototype._viewsWillLifecycles = function (enteringView, leavingView) {
-        enteringView && this._willEnter(enteringView);
-        leavingView && this._willLeave(leavingView);
+        if (enteringView) {
+            enteringView._willEnter();
+            this.viewWillEnter.emit(enteringView);
+            this._app.viewWillEnter.emit(enteringView);
+        }
+        if (leavingView) {
+            leavingView._willLeave();
+            this.viewWillLeave.emit(leavingView);
+            this._app.viewWillLeave.emit(leavingView);
+        }
     };
     NavControllerBase.prototype._trnsFinish = function (trns, opts, resolve) {
         var hasCompleted = trns.hasCompleted;
@@ -45516,11 +45479,15 @@ var NavControllerBase = (function (_super) {
         if (hasCompleted) {
             if (trns.enteringView) {
                 enteringName = trns.enteringView.name;
-                this._didEnter(trns.enteringView);
+                trns.enteringView._didEnter();
+                this.viewDidEnter.emit(trns.enteringView);
+                this._app.viewDidEnter.emit(trns.enteringView);
             }
             if (trns.leavingView) {
                 leavingName = trns.leavingView.name;
-                this._didLeave(trns.leavingView);
+                trns.leavingView._didLeave();
+                this.viewDidLeave.emit(trns.leavingView);
+                this._app.viewDidLeave.emit(trns.leavingView);
             }
             this._cleanup(trns.enteringView);
         }
@@ -45543,7 +45510,9 @@ var NavControllerBase = (function (_super) {
         for (var i = this._views.length - 1; i >= 0; i--) {
             var view = this._views[i];
             if (i > activeViewIndex) {
-                this._willUnload(view);
+                view._willUnload();
+                this.viewWillUnload.emit(view);
+                this._app.viewWillUnload.emit(view);
                 view._destroy(this._renderer);
             }
             else if (i < activeViewIndex && !this._isPortal) {
@@ -45560,39 +45529,6 @@ var NavControllerBase = (function (_super) {
                 });
             }
         }
-    };
-    NavControllerBase.prototype._willLoad = function (view) {
-        view._willLoad();
-    };
-    NavControllerBase.prototype._didLoad = function (view) {
-        view._didLoad();
-        this.viewDidLoad.emit(view);
-        this._app.viewDidLoad.emit(view);
-    };
-    NavControllerBase.prototype._willEnter = function (view) {
-        view._willEnter();
-        this.viewWillEnter.emit(view);
-        this._app.viewWillEnter.emit(view);
-    };
-    NavControllerBase.prototype._didEnter = function (view) {
-        view._didEnter();
-        this.viewDidEnter.emit(view);
-        this._app.viewDidEnter.emit(view);
-    };
-    NavControllerBase.prototype._willLeave = function (view) {
-        view._willLeave();
-        this.viewWillLeave.emit(view);
-        this._app.viewWillLeave.emit(view);
-    };
-    NavControllerBase.prototype._didLeave = function (view) {
-        view._didLeave();
-        this.viewDidLeave.emit(view);
-        this._app.viewDidLeave.emit(view);
-    };
-    NavControllerBase.prototype._willUnload = function (view) {
-        view._willUnload();
-        this.viewWillUnload.emit(view);
-        this._app.viewWillUnload.emit(view);
     };
     NavControllerBase.prototype.getActiveChildNav = function () {
         return this._children[this._children.length - 1];
@@ -45680,14 +45616,11 @@ var NavControllerBase = (function (_super) {
         return !!(activeView && activeView.enableBack()) || false;
     };
     NavControllerBase.prototype.isTransitioning = function () {
-        if (this._trnsTm === 0) {
-            return false;
-        }
         return (this._trnsTm > Date.now());
     };
     NavControllerBase.prototype.setTransitioning = function (isTransitioning, durationPadding) {
         if (durationPadding === void 0) { durationPadding = 2000; }
-        this._trnsTm = (isTransitioning ? (Date.now() + durationPadding + ACTIVE_TRANSITION_OFFSET) : 0);
+        this._trnsTm = (isTransitioning ? Date.now() + durationPadding : 0);
     };
     NavControllerBase.prototype.getActive = function () {
         return this._views[this._views.length - 1];
@@ -45716,9 +45649,6 @@ var NavControllerBase = (function (_super) {
     NavControllerBase.prototype.length = function () {
         return this._views.length;
     };
-    NavControllerBase.prototype.getViews = function () {
-        return this._views;
-    };
     NavControllerBase.prototype.isSwipeBackEnabled = function () {
         return this._sbEnabled;
     };
@@ -45733,12 +45663,24 @@ var NavControllerBase = (function (_super) {
     NavControllerBase.prototype.setViewport = function (val) {
         this._viewport = val;
     };
+    Object.defineProperty(NavControllerBase.prototype, "rootNav", {
+        get: function () {
+            console.warn('nav.rootNav() has been deprecated, please use app.getRootNav() instead');
+            return this._app.getRootNav();
+        },
+        enumerable: true,
+        configurable: true
+    });
+    NavControllerBase.prototype.present = function () {
+        console.warn('nav.present() has been deprecated.\n' +
+            'Please inject the overlay\'s controller and use the present method on the instance instead.');
+        return Promise.resolve();
+    };
     return NavControllerBase;
 }(Ion));
 var ctrlIds = -1;
 var DISABLE_APP_MINIMUM_DURATION = 64;
 var ACTIVE_TRANSITION_MAX_TIME = 5000;
-var ACTIVE_TRANSITION_OFFSET = 2000;
 
 var Animation = (function () {
     function Animation(ele, opts, raf$$1) {
@@ -46353,6 +46295,14 @@ var Tabs = (function (_super) {
         this._sbPadding = config.getBoolean('statusbarPadding');
         this._subPages = config.getBoolean('tabsHideOnSubPages');
         this.tabsHighlight = config.getBoolean('tabsHighlight');
+        if (config.get('tabSubPages') !== null) {
+            console.warn('Config option "tabSubPages" has been deprecated. Please use "tabsHideOnSubPages" instead.');
+            this._subPages = config.getBoolean('tabSubPages');
+        }
+        if (config.get('tabbarHighlight') !== null) {
+            console.warn('Config option "tabbarHighlight" has been deprecated. Please use "tabsHighlight" instead.');
+            this.tabsHighlight = config.getBoolean('tabbarHighlight');
+        }
         if (this.parent) {
             this.parent.registerChildNav(this);
         }
@@ -46382,14 +46332,31 @@ var Tabs = (function (_super) {
         enumerable: true,
         configurable: true
     });
-    Tabs.prototype.ngOnDestroy = function () {
-        this.parent.unregisterChildNav(this);
-    };
     Tabs.prototype.ngAfterViewInit = function () {
         var _this = this;
         this._setConfig('tabsPlacement', 'bottom');
         this._setConfig('tabsLayout', 'icon-top');
         this._setConfig('tabsHighlight', this.tabsHighlight);
+        this._setConfig('tabbarPlacement', 'bottom');
+        this._setConfig('tabbarLayout', 'icon-top');
+        if (this.tabbarPlacement !== undefined) {
+            console.warn('Input "tabbarPlacement" has been deprecated. Please use "tabsPlacement" instead.');
+            this.setElementAttribute('tabsPlacement', this.tabbarPlacement);
+            this.tabsPlacement = this.tabbarPlacement;
+        }
+        if (this._config.get('tabbarPlacement') !== null) {
+            console.warn('Config option "tabbarPlacement" has been deprecated. Please use "tabsPlacement" instead.');
+            this.setElementAttribute('tabsPlacement', this._config.get('tabbarPlacement'));
+        }
+        if (this.tabbarLayout !== undefined) {
+            console.warn('Input "tabbarLayout" has been deprecated. Please use "tabsLayout" instead.');
+            this.setElementAttribute('tabsLayout', this.tabbarLayout);
+            this.tabsLayout = this.tabbarLayout;
+        }
+        if (this._config.get('tabbarLayout') !== null) {
+            console.warn('Config option "tabbarLayout" has been deprecated. Please use "tabsLayout" instead.');
+            this.setElementAttribute('tabsLayout', this._config.get('tabsLayout'));
+        }
         if (this.tabsHighlight) {
             this._platform.onResize(function () {
                 _this._highlight.select(_this.getSelected());
@@ -46475,9 +46442,12 @@ var Tabs = (function (_super) {
                 _this._selectHistory.push(selectedTab.id);
             }
             if (alreadyLoaded && selectedPage) {
-                var content = selectedPage.getContent();
-                if (content && content instanceof Content) {
-                    content.resize();
+                var content_1 = selectedPage.getContent();
+                if (content_1 && content_1 instanceof Content) {
+                    nativeRaf(function () {
+                        content_1.readDimensions();
+                        content_1.writeDimensions();
+                    });
                 }
             }
         });
@@ -46548,7 +46518,7 @@ var Tabs = (function (_super) {
                         '<a *ngFor="let t of _tabs" [tab]="t" class="tab-button" [class.tab-disabled]="!t.enabled" [class.tab-hidden]="!t.show" role="tab" href="#" (ionSelect)="select($event)">' +
                         '<ion-icon *ngIf="t.tabIcon" [name]="t.tabIcon" [isActive]="t.isSelected" class="tab-button-icon"></ion-icon>' +
                         '<span *ngIf="t.tabTitle" class="tab-button-text">{{t.tabTitle}}</span>' +
-                        '<ion-badge *ngIf="t.tabBadge" class="tab-badge" [color]="t.tabBadgeStyle">{{t.tabBadge}}</ion-badge>' +
+                        '<ion-badge *ngIf="t.tabBadge" class="tab-badge" [ngClass]="\'badge-\' + t.tabBadgeStyle">{{t.tabBadge}}</ion-badge>' +
                         '<div class="button-effect"></div>' +
                         '</a>' +
                         '<div class="tab-highlight"></div>' +
@@ -46572,7 +46542,9 @@ var Tabs = (function (_super) {
         'color': [{ type: Input },],
         'mode': [{ type: Input },],
         'selectedIndex': [{ type: Input },],
+        'tabbarLayout': [{ type: Input },],
         'tabsLayout': [{ type: Input },],
+        'tabbarPlacement': [{ type: Input },],
         'tabsPlacement': [{ type: Input },],
         'tabsHighlight': [{ type: Input },],
         'ionChange': [{ type: Output },],
@@ -46771,9 +46743,8 @@ var Content = (function (_super) {
         this._footerHeight = 0;
         this._tabsPlacement = null;
         var ele = this._elementRef.nativeElement;
-        if (!ele) {
+        if (!ele)
             return;
-        }
         var parentEle = ele.parentElement;
         var computedStyle;
         for (var i = 0; i < parentEle.children.length; i++) {
@@ -46907,7 +46878,6 @@ var Transition = (function (_super) {
         _super.call(this, null, opts, raf);
         this.enteringView = enteringView;
         this.leavingView = leavingView;
-        this.hasChildTrns = false;
     }
     Transition.prototype.init = function () { };
     Transition.prototype.registerStart = function (trnsStart) {
@@ -46969,7 +46939,6 @@ var __extends$90 = (undefined && undefined.__extends) || function (d, b) {
 var DURATION = 500;
 var EASING = 'cubic-bezier(0.36,0.66,0.04,1)';
 var OPACITY = 'opacity';
-var TRANSFORM = 'transform';
 var TRANSLATEX = 'translateX';
 var OFF_RIGHT = '99.5%';
 var OFF_LEFT = '-33%';
@@ -47031,9 +47000,16 @@ var IOSTransition = (function (_super) {
                 }
                 else {
                     enteringTitle.fromTo(TRANSLATEX, OFF_RIGHT, CENTER, true);
-                    enteringNavbarBg
-                        .beforeClearStyles([OPACITY])
-                        .fromTo(TRANSLATEX, OFF_RIGHT, CENTER, true);
+                    if (leavingHasNavbar) {
+                        enteringNavbarBg
+                            .beforeClearStyles([TRANSLATEX])
+                            .fromTo(OPACITY, 0.01, 1, true);
+                    }
+                    else {
+                        enteringNavbarBg
+                            .beforeClearStyles([OPACITY])
+                            .fromTo(TRANSLATEX, OFF_RIGHT, CENTER, true);
+                    }
                     if (enteringView.enableBack()) {
                         enteringBackButton
                             .beforeAddClass(SHOW_BACK_BTN_CSS)
@@ -47061,8 +47037,7 @@ var IOSTransition = (function (_super) {
             else {
                 leavingContent
                     .fromTo(TRANSLATEX, CENTER, OFF_LEFT)
-                    .fromTo(OPACITY, 1, OFF_OPACITY)
-                    .afterClearStyles([TRANSFORM, OPACITY]);
+                    .fromTo(OPACITY, 1, OFF_OPACITY);
             }
             if (leavingHasNavbar) {
                 var leavingNavbarEle = leavingPageEle.querySelector('ion-navbar');
@@ -47082,20 +47057,22 @@ var IOSTransition = (function (_super) {
                 leavingNavbarItems.fromTo(OPACITY, 0.99, 0);
                 if (backDirection) {
                     leavingTitle.fromTo(TRANSLATEX, CENTER, '100%');
-                    leavingNavbarBg
-                        .beforeClearStyles([OPACITY])
-                        .fromTo(TRANSLATEX, CENTER, '100%');
+                    if (enteringHasNavbar) {
+                        leavingNavbarBg
+                            .beforeClearStyles([TRANSLATEX])
+                            .fromTo('opacity', 0.99, 0);
+                    }
+                    else {
+                        leavingNavbarBg
+                            .beforeClearStyles([OPACITY])
+                            .fromTo(TRANSLATEX, CENTER, '100%');
+                    }
                     var leavingBackBtnText = new Animation(leavingNavbarEle.querySelector('.back-button-text'));
                     leavingBackBtnText.fromTo(TRANSLATEX, CENTER, (300) + 'px');
                     leavingNavBar.add(leavingBackBtnText);
                 }
                 else {
-                    leavingTitle
-                        .fromTo(TRANSLATEX, CENTER, OFF_LEFT)
-                        .afterClearStyles([TRANSFORM]);
-                    leavingBackButton.afterClearStyles([OPACITY]);
-                    leavingTitle.afterClearStyles([OPACITY]);
-                    leavingNavbarItems.afterClearStyles([OPACITY]);
+                    leavingTitle.fromTo(TRANSLATEX, CENTER, OFF_LEFT);
                 }
             }
         }
@@ -47126,6 +47103,7 @@ var MDTransition = (function (_super) {
         if (enteringView) {
             if (backDirection) {
                 this.duration(isPresent$7(opts.duration) ? opts.duration : 200).easing('cubic-bezier(0.47,0,0.745,0.715)');
+                this.enteringPage.beforeClearStyles([TRANSLATEY]);
             }
             else {
                 this.duration(isPresent$7(opts.duration) ? opts.duration : 280).easing('cubic-bezier(0.36,0.66,0.04,1)');
@@ -48199,9 +48177,6 @@ var IonicApp = (function (_super) {
         if (portal === AppPortal.TOAST) {
             return this._toastPortal;
         }
-        if (portal === AppPortal.MODAL) {
-            return this._modalPortal;
-        }
         return this._overlayPortal;
     };
     IonicApp.prototype._disableScroll = function (shouldDisableScroll) {
@@ -48211,7 +48186,6 @@ var IonicApp = (function (_super) {
         { type: Component, args: [{
                     selector: 'ion-app',
                     template: '<div #viewport app-viewport></div>' +
-                        '<div #modalPortal overlay-portal></div>' +
                         '<div #overlayPortal overlay-portal></div>' +
                         '<div #loadingPortal class="loading-portal" overlay-portal></div>' +
                         '<div #toastPortal class="toast-portal" overlay-portal></div>' +
@@ -48229,7 +48203,6 @@ var IonicApp = (function (_super) {
     ];
     IonicApp.propDecorators = {
         '_viewport': [{ type: ViewChild, args: ['viewport', { read: ViewContainerRef },] },],
-        '_modalPortal': [{ type: ViewChild, args: ['modalPortal', { read: OverlayPortal },] },],
         '_overlayPortal': [{ type: ViewChild, args: ['overlayPortal', { read: OverlayPortal },] },],
         '_loadingPortal': [{ type: ViewChild, args: ['loadingPortal', { read: OverlayPortal },] },],
         '_toastPortal': [{ type: ViewChild, args: ['toastPortal', { read: OverlayPortal },] },],
@@ -48239,9 +48212,8 @@ var IonicApp = (function (_super) {
 var AppPortal;
 (function (AppPortal) {
     AppPortal[AppPortal["DEFAULT"] = 0] = "DEFAULT";
-    AppPortal[AppPortal["MODAL"] = 1] = "MODAL";
-    AppPortal[AppPortal["LOADING"] = 2] = "LOADING";
-    AppPortal[AppPortal["TOAST"] = 3] = "TOAST";
+    AppPortal[AppPortal["LOADING"] = 1] = "LOADING";
+    AppPortal[AppPortal["TOAST"] = 2] = "TOAST";
 })(AppPortal || (AppPortal = {}));
 
 var LoadingCmp = (function () {
@@ -48338,6 +48310,9 @@ var Loading = (function (_super) {
     };
     Loading.prototype.dismissAll = function () {
         this._nav && this._nav.popAll();
+    };
+    Loading.create = function (opt) {
+        console.warn('Loading.create(..) has been deprecated. Please inject LoadingController instead');
     };
     return Loading;
 }(ViewController));
@@ -48467,7 +48442,7 @@ var ModalCmp = (function () {
         this._viewCtrl = _viewCtrl;
         this._bdDismiss = _navParams.data.opts.enableBackdropDismiss;
     }
-    ModalCmp.prototype.ionViewWillLoad = function () {
+    ModalCmp.prototype.ngAfterViewInit = function () {
         this._load(this._navParams.data.component);
     };
     ModalCmp.prototype._load = function (component) {
@@ -48539,7 +48514,10 @@ var Modal = (function (_super) {
     };
     Modal.prototype.present = function (navOptions) {
         if (navOptions === void 0) { navOptions = {}; }
-        return this._app.present(this, navOptions, AppPortal.MODAL);
+        return this._app.present(this, navOptions);
+    };
+    Modal.create = function (cmp, opt) {
+        console.warn('Modal.create(..) has been deprecated. Please inject ModalController instead');
     };
     return Modal;
 }(ViewController));
@@ -48562,10 +48540,9 @@ var ModalController = (function () {
 }());
 
 var PickerColumnCmp = (function () {
-    function PickerColumnCmp(config, elementRef, _sanitizer, _haptic) {
+    function PickerColumnCmp(config, elementRef, _sanitizer) {
         this.elementRef = elementRef;
         this._sanitizer = _sanitizer;
-        this._haptic = _haptic;
         this.y = 0;
         this.pos = [];
         this.startY = null;
@@ -48607,7 +48584,6 @@ var PickerColumnCmp = (function () {
         }
         this.minY = (minY * this.optHeight * -1);
         this.maxY = (maxY * this.optHeight * -1);
-        this._haptic.gestureSelectionStart();
         return true;
     };
     PickerColumnCmp.prototype.pointerMove = function (ev) {
@@ -48631,11 +48607,6 @@ var PickerColumnCmp = (function () {
             this.bounceFrom = 0;
         }
         this.update(y, 0, false, false);
-        var currentIndex = Math.max(Math.abs(Math.round(y / this.optHeight)), 0);
-        if (currentIndex !== this.lastTempIndex) {
-            this._haptic.gestureSelectionChanged();
-        }
-        this.lastTempIndex = currentIndex;
     };
     PickerColumnCmp.prototype.pointerEnd = function (ev) {
         if (!this.receivingEvents) {
@@ -48679,7 +48650,6 @@ var PickerColumnCmp = (function () {
         cancelRaf(this.rafId);
         if (isNaN(this.y) || !this.optHeight) {
             this.update(y, 0, true, true);
-            this._haptic.gestureSelectionEnd();
         }
         else if (Math.abs(this.velocity) > 0) {
             this.velocity *= DECELERATION_FRICTION$1;
@@ -48693,6 +48663,7 @@ var PickerColumnCmp = (function () {
                 y = this.maxY;
                 this.velocity = 0;
             }
+            console.log("decelerate y: " + y + ", velocity: " + this.velocity + ", optHeight: " + this.optHeight);
             var notLockedIn = (y % this.optHeight !== 0 || Math.abs(this.velocity) > 1);
             this.update(y, 0, true, !notLockedIn);
             if (notLockedIn) {
@@ -48702,14 +48673,8 @@ var PickerColumnCmp = (function () {
         else if (this.y % this.optHeight !== 0) {
             var currentPos = Math.abs(this.y % this.optHeight);
             this.velocity = (currentPos > (this.optHeight / 2) ? 1 : -1);
-            this._haptic.gestureSelectionEnd();
             this.decelerate();
         }
-        var currentIndex = Math.max(Math.abs(Math.round(y / this.optHeight)), 0);
-        if (currentIndex !== this.lastTempIndex) {
-            this._haptic.gestureSelectionChanged();
-        }
-        this.lastTempIndex = currentIndex;
     };
     PickerColumnCmp.prototype.optClick = function (ev, index) {
         if (!this.velocity) {
@@ -48805,7 +48770,6 @@ var PickerColumnCmp = (function () {
         { type: Config, },
         { type: ElementRef, },
         { type: DomSanitizer, },
-        { type: Haptic, },
     ];
     PickerColumnCmp.propDecorators = {
         'colEle': [{ type: ViewChild, args: ['colEle',] },],
@@ -49009,6 +48973,9 @@ var Picker = (function (_super) {
         if (navOptions === void 0) { navOptions = {}; }
         return this._app.present(this, navOptions);
     };
+    Picker.create = function (opt) {
+        console.warn('Picker.create(..) has been deprecated. Please inject PickerController instead');
+    };
     Picker.propDecorators = {
         'ionChange': [{ type: Output },],
     };
@@ -49209,7 +49176,7 @@ var PopoverCmp = (function () {
         }
         this.id = (++popoverIds);
     }
-    PopoverCmp.prototype.ionViewWillLoad = function () {
+    PopoverCmp.prototype.ngAfterViewInit = function () {
         var activeElement = document.activeElement;
         if (document.activeElement) {
             activeElement.blur();
@@ -49293,6 +49260,11 @@ var Popover = (function (_super) {
         if (navOptions === void 0) { navOptions = {}; }
         return this._app.present(this, navOptions);
     };
+    Popover.create = function (component, data, opts) {
+        if (data === void 0) { data = {}; }
+        if (opts === void 0) { opts = {}; }
+        console.warn('Popover.create(..) has been deprecated. Please inject PopoverController instead');
+    };
     return Popover;
 }(ViewController));
 var PopoverController = (function () {
@@ -49349,21 +49321,21 @@ var Activator = (function () {
         this._css = config.get('activatedClass') || 'activated';
     }
     Activator.prototype.downAction = function (ev, activatableEle, startCoord) {
-        var _this = this;
-        if (this.disableActivated(ev)) {
+        var self = this;
+        if (self.disableActivated(ev)) {
             return;
         }
-        this._queue.push(activatableEle);
+        self._queue.push(activatableEle);
         rafFrames(2, function () {
             var activatableEle;
-            for (var i = 0; i < _this._queue.length; i++) {
-                activatableEle = _this._queue[i];
+            for (var i = 0; i < self._queue.length; i++) {
+                activatableEle = self._queue[i];
                 if (activatableEle && activatableEle.parentNode) {
-                    _this._active.push(activatableEle);
-                    activatableEle.classList.add(_this._css);
+                    self._active.push(activatableEle);
+                    activatableEle.classList.add(self._css);
                 }
             }
-            _this._queue = [];
+            self._queue = [];
         });
     };
     Activator.prototype.upAction = function (ev, activatableEle, startCoord) {
@@ -49384,27 +49356,24 @@ var Activator = (function () {
         }
     };
     Activator.prototype.deactivate = function () {
-        var _this = this;
-        this._queue = [];
+        var self = this;
+        self._queue = [];
         rafFrames(2, function () {
-            for (var i = 0; i < _this._active.length; i++) {
-                _this._active[i].classList.remove(_this._css);
+            for (var i = 0; i < self._active.length; i++) {
+                self._active[i].classList.remove(self._css);
             }
-            _this._active = [];
+            self._active = [];
         });
     };
     Activator.prototype.disableActivated = function (ev) {
-        if (ev.defaultPrevented) {
+        if (ev.defaultPrevented)
             return true;
-        }
         var targetEle = ev.target;
-        for (var i = 0; i < 4; i++) {
-            if (!targetEle) {
+        for (var x = 0; x < 4; x++) {
+            if (!targetEle)
                 break;
-            }
-            if (targetEle.hasAttribute('disable-activated')) {
+            if (targetEle.hasAttribute('disable-activated'))
                 return true;
-            }
             targetEle = targetEle.parentElement;
         }
         return false;
@@ -49450,14 +49419,15 @@ var RippleActivator = (function (_super) {
         this._queue = [];
     };
     RippleActivator.prototype.upAction = function (ev, activatableEle, startCoord) {
-        if (!hasPointerMoved(6, startCoord, pointerCoord(ev))) {
-            var i = activatableEle.childElementCount;
-            while (i--) {
-                var rippleEle = activatableEle.children[i];
-                if (rippleEle.classList.contains('button-effect')) {
-                    this.startRippleEffect(rippleEle, activatableEle, startCoord);
-                    break;
-                }
+        if (hasPointerMoved(6, startCoord, pointerCoord(ev))) {
+            return;
+        }
+        var i = activatableEle.childElementCount;
+        while (i--) {
+            var rippleEle = activatableEle.children[i];
+            if (rippleEle.classList.contains('button-effect')) {
+                this.startRippleEffect(rippleEle, activatableEle, startCoord);
+                break;
             }
         }
         _super.prototype.upAction.call(this, ev, activatableEle, startCoord);
@@ -49509,29 +49479,29 @@ var TOUCH_DOWN_ACCEL = 300;
 
 var TapClick = (function () {
     function TapClick(config, app, zone) {
-        var _this = this;
         this.app = app;
         this.lastTouch = 0;
         this.disableClick = 0;
         this.lastActivated = 0;
+        var self = this;
         if (config.get('activator') === 'ripple') {
-            this.activator = new RippleActivator(app, config);
+            self.activator = new RippleActivator(app, config);
         }
         else if (config.get('activator') === 'highlight') {
-            this.activator = new Activator(app, config);
+            self.activator = new Activator(app, config);
         }
-        this.usePolyfill = (config.get('tapPolyfill') === true);
+        self.usePolyfill = (config.get('tapPolyfill') === true);
         zone.runOutsideAngular(function () {
-            addListener('click', _this.click.bind(_this), true);
-            addListener('touchstart', _this.touchStart.bind(_this));
-            addListener('touchend', _this.touchEnd.bind(_this));
-            addListener('touchcancel', _this.pointerCancel.bind(_this));
-            addListener('mousedown', _this.mouseDown.bind(_this), true);
-            addListener('mouseup', _this.mouseUp.bind(_this), true);
+            addListener('click', self.click.bind(self), true);
+            addListener('touchstart', self.touchStart.bind(self));
+            addListener('touchend', self.touchEnd.bind(self));
+            addListener('touchcancel', self.pointerCancel.bind(self));
+            addListener('mousedown', self.mouseDown.bind(self), true);
+            addListener('mouseup', self.mouseUp.bind(self), true);
         });
-        this.pointerMove = function (ev) {
-            if (!_this.startCoord || hasPointerMoved(POINTER_MOVE_UNTIL_CANCEL, _this.startCoord, pointerCoord(ev))) {
-                _this.pointerCancel(ev);
+        self.pointerMove = function (ev) {
+            if (hasPointerMoved(POINTER_MOVE_UNTIL_CANCEL, self.startCoord, pointerCoord(ev))) {
+                self.pointerCancel(ev);
             }
         };
     }
@@ -49793,6 +49763,9 @@ var Toast = (function (_super) {
     };
     Toast.prototype.dismissAll = function () {
         this._nav && this._nav.popAll();
+    };
+    Toast.create = function (opt) {
+        console.warn('Toast.create(..) has been deprecated. Please inject ToastController instead');
     };
     return Toast;
 }(ViewController));
@@ -50190,10 +50163,9 @@ var Avatar = (function () {
 }());
 
 var Backdrop = (function () {
-    function Backdrop(_gestureCtrl, _elementRef, _renderer) {
+    function Backdrop(_gestureCtrl, _elementRef) {
         this._gestureCtrl = _gestureCtrl;
         this._elementRef = _elementRef;
-        this._renderer = _renderer;
         this._gestureID = null;
         this.disableScroll = true;
     }
@@ -50211,9 +50183,6 @@ var Backdrop = (function () {
     Backdrop.prototype.getNativeElement = function () {
         return this._elementRef.nativeElement;
     };
-    Backdrop.prototype.setElementClass = function (className, add) {
-        this._renderer.setElementClass(this._elementRef.nativeElement, className, add);
-    };
     Backdrop.decorators = [
         { type: Directive, args: [{
                     selector: 'ion-backdrop',
@@ -50227,7 +50196,6 @@ var Backdrop = (function () {
     Backdrop.ctorParameters = [
         { type: GestureController, },
         { type: ElementRef, },
-        { type: Renderer, },
     ];
     Backdrop.propDecorators = {
         'disableScroll': [{ type: Input },],
@@ -50348,6 +50316,13 @@ var Button = (function (_super) {
         enumerable: true,
         configurable: true
     });
+    Object.defineProperty(Button.prototype, "fab", {
+        set: function (val) {
+            this._attr('_shape', 'fab', val);
+        },
+        enumerable: true,
+        configurable: true
+    });
     Object.defineProperty(Button.prototype, "block", {
         set: function (val) {
             this._attr('_display', 'block', val);
@@ -50460,6 +50435,7 @@ var Button = (function (_super) {
         'clear': [{ type: Input },],
         'solid': [{ type: Input },],
         'round': [{ type: Input },],
+        'fab': [{ type: Input },],
         'block': [{ type: Input },],
         'full': [{ type: Input },],
         'mode': [{ type: Input },],
@@ -50588,11 +50564,9 @@ var Icon = (function (_super) {
         },
         set: function (val) {
             if (!(/^md-|^ios-|^logo-/.test(val))) {
-                this._name = this._iconMode + '-' + val;
+                val = this._iconMode + '-' + val;
             }
-            else {
-                this._name = val;
-            }
+            this._name = val;
             this.update();
         },
         enumerable: true,
@@ -50632,41 +50606,28 @@ var Icon = (function (_super) {
         configurable: true
     });
     Icon.prototype.update = function () {
-        var name;
+        var css = 'ion-';
+        this._hidden = (this._name === null);
         if (this._ios && this._iconMode === 'ios') {
-            name = this._ios;
+            css += this._ios;
         }
         else if (this._md && this._iconMode === 'md') {
-            name = this._md;
+            css += this._md;
         }
         else {
-            name = this._name;
+            css += this._name;
         }
-        var hidden = this._hidden = (name === null);
-        if (hidden) {
-            return;
+        if (this._iconMode === 'ios' && !this.isActive && css.indexOf('logo') < 0) {
+            css += '-outline';
         }
-        var iconMode = name.split('-', 2)[0];
-        if (iconMode === 'ios' &&
-            !this.isActive &&
-            name.indexOf('logo-') < 0 &&
-            name.indexOf('-outline') < 0) {
-            name += '-outline';
+        if (this._css !== css) {
+            if (this._css) {
+                this.setElementClass(this._css, false);
+            }
+            this._css = css;
+            this.setElementClass(css, true);
+            this.setElementAttribute('aria-label', css.replace('ion-', '').replace('ios-', '').replace('md-', '').replace('-', ' '));
         }
-        var css = 'ion-' + name;
-        if (this._css === css) {
-            return;
-        }
-        if (this._css) {
-            this.setElementClass(this._css, false);
-        }
-        this._css = css;
-        this.setElementClass(css, true);
-        var label = name
-            .replace('ios-', '')
-            .replace('md-', '')
-            .replace('-', ' ');
-        this.setElementAttribute('aria-label', label);
     };
     Icon.decorators = [
         { type: Directive, args: [{
@@ -51285,7 +51246,7 @@ function updateDate(existingData, newData) {
                 return;
             }
         }
-        else if ((isPresent$7(newData.year) || isPresent$7(newData.hour) || isPresent$7(newData.month) || isPresent$7(newData.day) || isPresent$7(newData.minute) || isPresent$7(newData.second))) {
+        else if ((isPresent$7(newData.year) || isPresent$7(newData.hour))) {
             if (isPresent$7(newData.ampm) && isPresent$7(newData.hour)) {
                 if (newData.ampm.value === 'pm') {
                     newData.hour.value = (newData.hour.value === 12 ? 12 : newData.hour.value + 12);
@@ -51929,9 +51890,7 @@ var FabButton = (function (_super) {
     return FabButton;
 }(Ion));
 var FabList = (function () {
-    function FabList(_elementRef, _renderer) {
-        this._elementRef = _elementRef;
-        this._renderer = _renderer;
+    function FabList() {
         this._visible = false;
         this._fabs = [];
     }
@@ -51951,32 +51910,28 @@ var FabList = (function () {
         if (visible === this._visible) {
             return;
         }
-        this._visible = visible;
         var fabs = this._fabs;
         var i = 1;
         if (visible) {
             fabs.forEach(function (fab) {
-                nativeTimeout(function () { return fab.setElementClass('show', true); }, i * 30);
+                setTimeout(function () { return fab.setElementClass('show', true); }, i * 30);
                 i++;
             });
         }
         else {
             fabs.forEach(function (fab) { return fab.setElementClass('show', false); });
         }
-        this.setElementClass('fab-list-active', visible);
-    };
-    FabList.prototype.setElementClass = function (className, add) {
-        this._renderer.setElementClass(this._elementRef.nativeElement, className, add);
+        this._visible = visible;
     };
     FabList.decorators = [
         { type: Directive, args: [{
                     selector: 'ion-fab-list',
+                    host: {
+                        '[class.fab-list-active]': '_visible'
+                    }
                 },] },
     ];
-    FabList.ctorParameters = [
-        { type: ElementRef, },
-        { type: Renderer, },
-    ];
+    FabList.ctorParameters = [];
     FabList.propDecorators = {
         '_setbuttons': [{ type: ContentChildren, args: [FabButton,] },],
     };
@@ -52006,17 +51961,17 @@ var FabContainer = (function () {
     FabContainer.prototype.toggleList = function () {
         this.setActiveLists(!this._listsActive);
     };
-    FabContainer.prototype.setActiveLists = function (isActive$$1) {
-        if (isActive$$1 === this._listsActive) {
+    FabContainer.prototype.setActiveLists = function (isActive) {
+        if (isActive === this._listsActive) {
             return;
         }
         var lists = this._fabLists.toArray();
         for (var _i = 0, lists_1 = lists; _i < lists_1.length; _i++) {
             var list = lists_1[_i];
-            list.setVisible(isActive$$1);
+            list.setVisible(isActive);
         }
-        this._mainButton.setActiveClose(isActive$$1);
-        this._listsActive = isActive$$1;
+        this._mainButton.setActiveClose(isActive);
+        this._listsActive = isActive;
     };
     FabContainer.prototype.close = function () {
         this.setActiveLists(false);
@@ -52257,13 +52212,6 @@ var InfiniteScroll = (function () {
         enumerable: true,
         configurable: true
     });
-    Object.defineProperty(InfiniteScroll.prototype, "enabled", {
-        set: function (shouldEnable) {
-            this.enable(shouldEnable);
-        },
-        enumerable: true,
-        configurable: true
-    });
     InfiniteScroll.prototype._onScroll = function () {
         var _this = this;
         if (this.state === STATE_LOADING || this.state === STATE_DISABLED) {
@@ -52340,7 +52288,6 @@ var InfiniteScroll = (function () {
     ];
     InfiniteScroll.propDecorators = {
         'threshold': [{ type: Input },],
-        'enabled': [{ type: Input },],
         'ionInfinite': [{ type: Output },],
     };
     return InfiniteScroll;
@@ -52401,9 +52348,6 @@ var ItemReorderGesture = (function () {
         });
     }
     ItemReorderGesture.prototype.onDragStart = function (ev) {
-        if (this.selectedItemEle) {
-            return false;
-        }
         var reorderElement = ev.target;
         if (reorderElement.nodeName !== 'ION-REORDER') {
             return false;
@@ -52446,7 +52390,7 @@ var ItemReorderGesture = (function () {
             if (overItem) {
                 var toIndex = indexForItem(overItem);
                 if (toIndex !== undefined && (toIndex !== this.lastToIndex || this.emptyZone)) {
-                    var fromIndex = indexForItem(selectedItem);
+                    var fromIndex = indexForItem(this.selectedItemEle);
                     this.lastToIndex = toIndex;
                     this.lastYcoord = posY;
                     this.emptyZone = false;
@@ -52460,25 +52404,20 @@ var ItemReorderGesture = (function () {
         var ydiff = Math.round(posY - this.offset.y + scrollPosition);
         selectedItem.style[CSS.transform] = "translateY(" + ydiff + "px)";
     };
-    ItemReorderGesture.prototype.onDragEnd = function (ev) {
+    ItemReorderGesture.prototype.onDragEnd = function () {
         var _this = this;
-        var selectedItem = this.selectedItemEle;
-        if (!selectedItem) {
+        if (!this.selectedItemEle) {
             return;
         }
-        if (ev) {
-            ev.preventDefault();
-            ev.stopPropagation();
-        }
         var toIndex = this.lastToIndex;
-        var fromIndex = indexForItem(selectedItem);
+        var fromIndex = indexForItem(this.selectedItemEle);
         var reorderInactive = function () {
             _this.selectedItemEle.style.transition = '';
             _this.selectedItemEle.classList.remove(ITEM_REORDER_ACTIVE);
             _this.selectedItemEle = null;
         };
         if (toIndex === fromIndex) {
-            selectedItem.style.transition = 'transform 200ms ease-in-out';
+            this.selectedItemEle.style.transition = 'transform 200ms ease-in-out';
             setTimeout(reorderInactive, 200);
         }
         else {
@@ -52487,7 +52426,7 @@ var ItemReorderGesture = (function () {
         this.reorderList.reorderEmit(fromIndex, toIndex);
     };
     ItemReorderGesture.prototype.itemForCoord = function (coord) {
-        return itemForPosition(this.offset.x - 100, coord.y, this.reorderList.getNativeElement());
+        return itemForPosition(this.offset.x - 100, coord.y);
     };
     ItemReorderGesture.prototype.scroll = function (posY) {
         if (posY < AUTO_SCROLL_MARGIN) {
@@ -52499,16 +52438,16 @@ var ItemReorderGesture = (function () {
         return this.lastScrollPosition;
     };
     ItemReorderGesture.prototype.destroy = function () {
-        this.onDragEnd(null);
+        this.onDragEnd();
         this.events.unlistenAll();
         this.events = null;
         this.reorderList = null;
     };
     return ItemReorderGesture;
 }());
-function itemForPosition(x, y, list) {
+function itemForPosition(x, y) {
     var element = document.elementFromPoint(x, y);
-    return findReorderItem(element, list);
+    return findReorderItem(element);
 }
 
 var ItemReorder = (function () {
@@ -52550,12 +52489,9 @@ var ItemReorder = (function () {
         configurable: true
     });
     ItemReorder.prototype.reorderPrepare = function () {
-        var ele = this._element;
-        var children = ele.children;
+        var children = this._element.children;
         for (var i = 0, ilen = children.length; i < ilen; i++) {
-            var child = children[i];
-            child.$ionIndex = i;
-            child.$ionReorderList = ele;
+            children[i].$ionIndex = i;
         }
     };
     ItemReorder.prototype.reorderStart = function () {
@@ -52650,11 +52586,7 @@ var Reorder = (function () {
     }
     Reorder.prototype.getReorderNode = function () {
         var node = this.item.getNativeElement();
-        return findReorderItem(node, null);
-    };
-    Reorder.prototype.onClick = function (ev) {
-        ev.preventDefault();
-        ev.stopPropagation();
+        return findReorderItem(node);
     };
     Reorder.decorators = [
         { type: Component, args: [{
@@ -52663,21 +52595,15 @@ var Reorder = (function () {
                 },] },
     ];
     Reorder.ctorParameters = [
-        { type: ItemReorder, decorators: [{ type: Inject, args: [forwardRef(function () { return Item; }),] },] },
+        { type: Item, decorators: [{ type: Inject, args: [forwardRef(function () { return Item; }),] },] },
         { type: ElementRef, },
     ];
-    Reorder.propDecorators = {
-        'onClick': [{ type: HostListener, args: ['click', ['$event'],] },],
-    };
     return Reorder;
 }());
-function findReorderItem(node, listNode) {
+function findReorderItem(node) {
     var nested = 0;
     while (node && nested < 4) {
         if (indexForItem(node) !== undefined) {
-            if (listNode && node.parentNode !== listNode) {
-                return null;
-            }
             return node;
         }
         node = node.parentNode;
@@ -52750,9 +52676,7 @@ var ItemSlidingGesture = (function (_super) {
         this.preSelectedContainer = null;
     };
     ItemSlidingGesture.prototype.notCaptured = function (ev) {
-        if (!clickedOptionButton(ev)) {
-            this.closeOpened();
-        }
+        this.closeOpened();
     };
     ItemSlidingGesture.prototype.closeOpened = function () {
         this.selectedContainer = null;
@@ -52774,15 +52698,11 @@ var ItemSlidingGesture = (function (_super) {
     return ItemSlidingGesture;
 }(PanGesture));
 function getContainer(ev) {
-    var ele = ev.target.closest('ion-item-sliding');
+    var ele = ev.target.closest('ion-item-sliding', true);
     if (ele) {
         return ele['$ionComponent'];
     }
     return null;
-}
-function clickedOptionButton(ev) {
-    var ele = ev.target.closest('ion-item-options>button');
-    return !!ele;
 }
 
 var __extends$119 = (undefined && undefined.__extends) || function (d, b) {
@@ -53191,7 +53111,7 @@ var MenuContentGesture = (function (_super) {
             && (velocity > 0.2 || slide.delta > z);
         var shouldCompleteLeft = (velocity <= 0)
             && (velocity < -0.2 || slide.delta < -z);
-        // console.debug('menu gesture, onSlideEnd', this.menu.side);
+        // console.debug('menu gesture, onSlide', this.menu.side);
         // console.debug('distance', slide.distance);
         // console.debug('delta', slide.delta);
         // console.debug('velocity', velocity);
@@ -53225,7 +53145,6 @@ var MenuContentGesture = (function (_super) {
 
 var Menu = (function () {
     function Menu(_menuCtrl, _elementRef, _config, _platform, _renderer, _keyboard, _zone, gestureCtrl) {
-        this._menuCtrl = _menuCtrl;
         this._elementRef = _elementRef;
         this._config = _config;
         this._platform = _platform;
@@ -53238,11 +53157,11 @@ var Menu = (function () {
         this._isAnimating = false;
         this._isPers = false;
         this._init = false;
-        this._events = new UIEventManager();
         this.isOpen = false;
         this.ionDrag = new EventEmitter();
         this.ionOpen = new EventEmitter();
         this.ionClose = new EventEmitter();
+        this._menuCtrl = _menuCtrl;
     }
     Object.defineProperty(Menu.prototype, "enabled", {
         get: function () {
@@ -53277,38 +53196,45 @@ var Menu = (function () {
         configurable: true
     });
     Menu.prototype.ngOnInit = function () {
-        var _this = this;
-        this._init = true;
-        var content = this.content;
-        this._cntEle = (content instanceof Node) ? content : content && content.getNativeElement && content.getNativeElement();
-        if (!this._cntEle) {
+        var self = this;
+        self._init = true;
+        var content = self.content;
+        self._cntEle = (content instanceof Node) ? content : content && content.getNativeElement && content.getNativeElement();
+        if (!self._cntEle) {
             return console.error('Menu: must have a [content] element to listen for drag events on. Example:\n\n<ion-menu [content]="content"></ion-menu>\n\n<ion-nav #content></ion-nav>');
         }
-        if (this.side !== 'left' && this.side !== 'right') {
-            this.side = 'left';
+        if (self.side !== 'left' && self.side !== 'right') {
+            self.side = 'left';
         }
-        this.setElementAttribute('side', this.side);
-        if (!this.type) {
-            this.type = this._config.get('menuType');
+        self._renderer.setElementAttribute(self._elementRef.nativeElement, 'side', self.side);
+        if (!self.type) {
+            self.type = self._config.get('menuType');
         }
-        this.setElementAttribute('type', this.type);
-        this._cntGesture = new MenuContentGesture(this, document.body);
-        var hasEnabledSameSideMenu = this._menuCtrl.getMenus().some(function (m) {
-            return m.side === _this.side && m.enabled;
+        self._renderer.setElementAttribute(self._elementRef.nativeElement, 'type', self.type);
+        self._cntGesture = new MenuContentGesture(self, document.body);
+        var hasEnabledSameSideMenu = self._menuCtrl.getMenus().some(function (m) {
+            return m.side === self.side && m.enabled;
         });
         if (hasEnabledSameSideMenu) {
-            this._isEnabled = false;
+            self._isEnabled = false;
         }
-        this._setListeners();
-        this._cntEle.classList.add('menu-content');
-        this._cntEle.classList.add('menu-content-' + this.type);
-        this._menuCtrl.register(this);
+        self._setListeners();
+        self.onContentClick = function (ev) {
+            if (self._isEnabled) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                self.close();
+            }
+        };
+        self._cntEle.classList.add('menu-content');
+        self._cntEle.classList.add('menu-content-' + self.type);
+        self._menuCtrl.register(self);
     };
-    Menu.prototype.onBackdropClick = function (ev) {
+    Menu.prototype.bdClick = function (ev) {
+        // console.debug('backdrop clicked');
         ev.preventDefault();
         ev.stopPropagation();
         this._menuCtrl.close();
-        return false;
     };
     Menu.prototype._setListeners = function () {
         if (!this._init) {
@@ -53381,33 +53307,23 @@ var Menu = (function () {
         });
     };
     Menu.prototype._before = function () {
-        this.menuContent && this.menuContent.resize();
-        this.setElementClass('show-menu', true);
-        this.backdrop.setElementClass('show-backdrop', true);
+        this.getNativeElement().classList.add('show-menu');
+        this.getBackdropElement().classList.add('show-backdrop');
         this._keyboard.close();
         this._isAnimating = true;
     };
     Menu.prototype._after = function (isOpen) {
         this.isOpen = isOpen;
         this._isAnimating = false;
-        this._events.unlistenAll();
+        this._cntEle.classList[isOpen ? 'add' : 'remove']('menu-content-open');
+        this._cntEle.removeEventListener('click', this.onContentClick);
         if (isOpen) {
-            this._cntEle.classList.add('menu-content-open');
-            var callback = this.onBackdropClick.bind(this);
-            this._events.pointerEvents({
-                element: this._cntEle,
-                pointerDown: callback
-            });
-            this._events.pointerEvents({
-                element: this.backdrop.getNativeElement(),
-                pointerDown: callback
-            });
+            this._cntEle.addEventListener('click', this.onContentClick);
             this.ionOpen.emit(true);
         }
         else {
-            this._cntEle.classList.remove('menu-content-open');
-            this.setElementClass('show-menu', false);
-            this.backdrop.setElementClass('show-menu', false);
+            this.getNativeElement().classList.remove('show-menu');
+            this.getBackdropElement().classList.remove('show-backdrop');
             this.ionClose.emit(true);
         }
     };
@@ -53455,15 +53371,8 @@ var Menu = (function () {
     Menu.prototype.getMenuController = function () {
         return this._menuCtrl;
     };
-    Menu.prototype.setElementClass = function (className, add) {
-        this._renderer.setElementClass(this._elementRef.nativeElement, className, add);
-    };
-    Menu.prototype.setElementAttribute = function (attributeName, value) {
-        this._renderer.setElementAttribute(this._elementRef.nativeElement, attributeName, value);
-    };
     Menu.prototype.ngOnDestroy = function () {
         this._menuCtrl.unregister(this);
-        this._events.unlistenAll();
         this._cntGesture && this._cntGesture.destroy();
         this._type && this._type.destroy();
         this._resizeUnreg && this._resizeUnreg();
@@ -53476,7 +53385,7 @@ var Menu = (function () {
         { type: Component, args: [{
                     selector: 'ion-menu',
                     template: '<div class="menu-inner"><ng-content></ng-content></div>' +
-                        '<ion-backdrop disableScroll="false"></ion-backdrop>',
+                        '<ion-backdrop (click)="bdClick($event)" disableScroll="false"></ion-backdrop>',
                     host: {
                         'role': 'navigation'
                     },
@@ -53496,7 +53405,6 @@ var Menu = (function () {
     ];
     Menu.propDecorators = {
         'backdrop': [{ type: ViewChild, args: [Backdrop,] },],
-        'menuContent': [{ type: ContentChild, args: [Content,] },],
         'content': [{ type: Input },],
         'id': [{ type: Input },],
         'side': [{ type: Input },],
@@ -54635,10 +54543,9 @@ var RangeKnob = (function () {
 }());
 var Range = (function (_super) {
     __extends$127(Range, _super);
-    function Range(_form, _haptic, _item, config, elementRef, renderer) {
+    function Range(_form, _item, config, elementRef, renderer) {
         _super.call(this, config, elementRef, renderer);
         this._form = _form;
-        this._haptic = _haptic;
         this._item = _item;
         this._dual = false;
         this._disabled = false;
@@ -54795,7 +54702,6 @@ var Range = (function (_super) {
         this.updateKnob(this._start, rect);
         this._active.position();
         this._pressed = this._active.pressed = true;
-        this._haptic.gestureSelectionStart();
         return true;
     };
     Range.prototype.pointerMove = function (ev) {
@@ -54812,7 +54718,6 @@ var Range = (function (_super) {
         ev.stopPropagation();
         this.updateKnob(pointerCoord(ev), this._rect);
         this._active.position();
-        this._haptic.gestureSelectionEnd();
         this._start = this._active = null;
         this._pressed = this._knobs.first.pressed = this._knobs.last.pressed = false;
     };
@@ -54832,9 +54737,6 @@ var Range = (function (_super) {
             this._active.ratio = (current.x - rect.left) / (rect.width);
             var newVal = this._active.value;
             if (oldVal !== newVal) {
-                if (this.snaps) {
-                    this._haptic.gestureSelectionChanged();
-                }
                 if (this._dual) {
                     this.value = {
                         lower: Math.min(this._knobs.first.value, this._knobs.last.value),
@@ -54994,7 +54896,6 @@ var Range = (function (_super) {
     ];
     Range.ctorParameters = [
         { type: Form, },
-        { type: Haptic, },
         { type: Item, decorators: [{ type: Optional },] },
         { type: Config, },
         { type: ElementRef, },
@@ -55405,18 +55306,12 @@ var Searchbar = (function (_super) {
         _super.call(this, config, elementRef, renderer);
         this._value = '';
         this._shouldBlur = true;
-        this._shouldAlignLeft = true;
-        this._isCancelVisible = false;
-        this._spellcheck = false;
-        this._autocomplete = 'off';
-        this._autocorrect = 'off';
         this._isActive = false;
         this._debouncer = new Debouncer(250);
         this.cancelButtonText = 'Cancel';
         this.showCancelButton = false;
         this.placeholder = 'Search';
         this.type = 'search';
-        this.animated = false;
         this.ionInput = new EventEmitter();
         this.ionBlur = new EventEmitter();
         this.ionFocus = new EventEmitter();
@@ -55453,23 +55348,17 @@ var Searchbar = (function (_super) {
         enumerable: true,
         configurable: true
     });
-    Object.defineProperty(Searchbar.prototype, "autocomplete", {
-        set: function (val) {
-            this._autocomplete = (val === '' || val === 'on') ? 'on' : this._config.get('autocomplete', 'off');
-        },
-        enumerable: true,
-        configurable: true
-    });
-    Object.defineProperty(Searchbar.prototype, "autocorrect", {
-        set: function (val) {
-            this._autocorrect = (val === '' || val === 'on') ? 'on' : this._config.get('autocorrect', 'off');
-        },
-        enumerable: true,
-        configurable: true
-    });
-    Object.defineProperty(Searchbar.prototype, "spellcheck", {
-        set: function (val) {
-            this._spellcheck = (val === '' || val === 'true' || val === true) ? true : this._config.getBoolean('spellcheck', false);
+    Object.defineProperty(Searchbar.prototype, "searchbarInput", {
+        set: function (searchbarInput) {
+            this._searchbarInput = searchbarInput;
+            var inputEle = searchbarInput.nativeElement;
+            var autoComplete = (this.autocomplete === '' || this.autocomplete === 'on') ? 'on' : this._config.get('autocomplete', 'off');
+            inputEle.setAttribute('autocomplete', autoComplete);
+            var autoCorrect = (this.autocorrect === '' || this.autocorrect === 'on') ? 'on' : this._config.get('autocorrect', 'off');
+            inputEle.setAttribute('autocorrect', autoCorrect);
+            var spellCheck = (this.spellcheck === '' || this.spellcheck === 'true' || this.spellcheck === true) ? true : this._config.getBoolean('spellcheck', false);
+            inputEle.setAttribute('spellcheck', spellCheck);
+            inputEle.setAttribute('type', this.type);
         },
         enumerable: true,
         configurable: true
@@ -55480,12 +55369,6 @@ var Searchbar = (function (_super) {
         },
         set: function (val) {
             this._value = val;
-            if (this._searchbarInput) {
-                var ele = this._searchbarInput.nativeElement;
-                if (ele) {
-                    ele.value = val;
-                }
-            }
         },
         enumerable: true,
         configurable: true
@@ -55496,31 +55379,21 @@ var Searchbar = (function (_super) {
             this.showCancelButton = (showCancelButton === '' || showCancelButton === 'true');
         }
     };
-    Searchbar.prototype.ngAfterContentInit = function () {
+    Searchbar.prototype.ngAfterViewChecked = function () {
         this.positionElements();
     };
     Searchbar.prototype.positionElements = function () {
-        var isAnimated = isTrueProperty(this.animated);
-        var prevAlignLeft = this._shouldAlignLeft;
-        var shouldAlignLeft = (!isAnimated || (this._value && this._value.toString().trim() !== '') || this._sbHasFocus === true);
-        this._shouldAlignLeft = shouldAlignLeft;
-        if (this._config.get('mode') !== 'ios') {
+        if (this._config.get('mode') !== 'ios')
             return;
+        if (this._searchbarInput && this._searchbarIcon) {
+            this.positionInputPlaceholder(this._searchbarInput.nativeElement, this._searchbarIcon.nativeElement);
         }
-        if (prevAlignLeft !== shouldAlignLeft) {
-            this.positionPlaceholder();
-        }
-        if (isAnimated) {
-            this.positionCancelButton();
+        if (this._cancelButton && this._cancelButton.nativeElement) {
+            this.positionCancelButton(this._cancelButton.nativeElement);
         }
     };
-    Searchbar.prototype.positionPlaceholder = function () {
-        if (!this._searchbarInput || !this._searchbarIcon) {
-            return;
-        }
-        var inputEle = this._searchbarInput.nativeElement;
-        var iconEle = this._searchbarIcon.nativeElement;
-        if (this._shouldAlignLeft) {
+    Searchbar.prototype.positionInputPlaceholder = function (inputEle, iconEle) {
+        if (this.shouldAlignLeft()) {
             inputEle.removeAttribute('style');
             iconEle.removeAttribute('style');
         }
@@ -55536,30 +55409,24 @@ var Searchbar = (function (_super) {
             iconEle.style.marginLeft = iconLeft;
         }
     };
-    Searchbar.prototype.positionCancelButton = function () {
-        if (!this._cancelButton || !this._cancelButton.nativeElement) {
-            return;
-        }
-        var showShowCancel = this._sbHasFocus;
-        if (showShowCancel !== this._isCancelVisible) {
-            var cancelStyleEle = this._cancelButton.nativeElement;
-            var cancelStyle = cancelStyleEle.style;
-            this._isCancelVisible = showShowCancel;
-            if (showShowCancel) {
-                cancelStyle.marginRight = '0';
+    Searchbar.prototype.positionCancelButton = function (cancelButtonEle) {
+        if (cancelButtonEle.offsetWidth > 0) {
+            if (this._sbHasFocus) {
+                cancelButtonEle.style.marginRight = '0';
             }
             else {
-                var offset = cancelStyleEle.offsetWidth;
-                if (offset > 0) {
-                    cancelStyle.marginRight = -offset + 'px';
-                }
+                cancelButtonEle.style.marginRight = -cancelButtonEle.offsetWidth + 'px';
             }
         }
     };
+    Searchbar.prototype.shouldAlignLeft = function () {
+        return ((this._value && this._value.toString().trim() !== '') || this._sbHasFocus === true);
+    };
     Searchbar.prototype.inputChanged = function (ev) {
         var _this = this;
-        this._value = ev.target.value;
+        var value = ev.target.value;
         this._debouncer.debounce(function () {
+            _this._value = value;
             _this.onChange(_this._value);
             _this.ionInput.emit(ev);
         });
@@ -55581,16 +55448,12 @@ var Searchbar = (function (_super) {
         this.positionElements();
     };
     Searchbar.prototype.clearInput = function (ev) {
-        var _this = this;
         this.ionClear.emit(ev);
-        setTimeout(function () {
-            var value = _this._value;
-            if (isPresent$7(value) && value !== '') {
-                _this.value = '';
-                _this.onChange(_this._value);
-                _this.ionInput.emit(ev);
-            }
-        }, 16 * 4);
+        if (isPresent$7(this._value) && this._value !== '') {
+            this._value = '';
+            this.onChange(this._value);
+            this.ionInput.emit(ev);
+        }
         this._shouldBlur = false;
     };
     Searchbar.prototype.cancelSearchbar = function (ev) {
@@ -55600,7 +55463,7 @@ var Searchbar = (function (_super) {
         this._isActive = false;
     };
     Searchbar.prototype.writeValue = function (val) {
-        this.value = val;
+        this._value = val;
         this.positionElements();
     };
     Searchbar.prototype.registerOnChange = function (fn) {
@@ -55609,32 +55472,23 @@ var Searchbar = (function (_super) {
     Searchbar.prototype.registerOnTouched = function (fn) {
         this.onTouched = fn;
     };
-    Searchbar.prototype.setFocus = function () {
-        this._renderer.invokeElementMethod(this._searchbarInput.nativeElement, 'focus');
-    };
     Searchbar.decorators = [
         { type: Component, args: [{
                     selector: 'ion-searchbar',
                     template: '<div class="searchbar-input-container">' +
-                        '<button ion-button (click)="cancelSearchbar($event)" (mousedown)="cancelSearchbar($event)" clear color="dark" class="searchbar-md-cancel" type="button">' +
+                        '<button ion-button (click)="cancelSearchbar($event)" (mousedown)="cancelSearchbar($event)" clear color="dark" class="searchbar-md-cancel">' +
                         '<ion-icon name="arrow-back"></ion-icon>' +
                         '</button>' +
                         '<div #searchbarIcon class="searchbar-search-icon"></div>' +
-                        '<input #searchbarInput class="searchbar-input" (input)="inputChanged($event)" (blur)="inputBlurred($event)" (focus)="inputFocused($event)" ' +
-                        '[attr.placeholder]="placeholder" ' +
-                        '[attr.type]="type" ' +
-                        '[attr.autocomplete]="_autocomplete" ' +
-                        '[attr.autocorrect]="_autocorrect" ' +
-                        '[attr.spellcheck]="_spellcheck">' +
-                        '<button ion-button clear class="searchbar-clear-icon" (click)="clearInput($event)" (mousedown)="clearInput($event)" type="button"></button>' +
+                        '<input #searchbarInput [(ngModel)]="_value" [attr.placeholder]="placeholder" (input)="inputChanged($event)" (blur)="inputBlurred($event)" (focus)="inputFocused($event)" class="searchbar-input">' +
+                        '<button ion-button clear class="searchbar-clear-icon" (click)="clearInput($event)" (mousedown)="clearInput($event)"></button>' +
                         '</div>' +
-                        '<button ion-button #cancelButton [tabindex]="_isActive ? 1 : -1" clear (click)="cancelSearchbar($event)" (mousedown)="cancelSearchbar($event)" class="searchbar-ios-cancel" type="button">{{cancelButtonText}}</button>',
+                        '<button ion-button #cancelButton [tabindex]="_isActive ? 1 : -1" clear (click)="cancelSearchbar($event)" (mousedown)="cancelSearchbar($event)" class="searchbar-ios-cancel">{{cancelButtonText}}</button>',
                     host: {
-                        '[class.searchbar-animated]': 'animated',
                         '[class.searchbar-has-value]': '_value',
                         '[class.searchbar-active]': '_isActive',
                         '[class.searchbar-show-cancel]': 'showCancelButton',
-                        '[class.searchbar-left-aligned]': '_shouldAlignLeft'
+                        '[class.searchbar-left-aligned]': 'shouldAlignLeft()'
                     },
                     encapsulation: ViewEncapsulation.None
                 },] },
@@ -55656,14 +55510,13 @@ var Searchbar = (function (_super) {
         'autocorrect': [{ type: Input },],
         'spellcheck': [{ type: Input },],
         'type': [{ type: Input },],
-        'animated': [{ type: Input },],
         'ionInput': [{ type: Output },],
         'ionBlur': [{ type: Output },],
         'ionFocus': [{ type: Output },],
         'ionCancel': [{ type: Output },],
         'ionClear': [{ type: Output },],
         '_sbHasFocus': [{ type: HostBinding, args: ['class.searchbar-has-focus',] },],
-        '_searchbarInput': [{ type: ViewChild, args: ['searchbarInput',] },],
+        'searchbarInput': [{ type: ViewChild, args: ['searchbarInput',] },],
         '_searchbarIcon': [{ type: ViewChild, args: ['searchbarIcon',] },],
         '_cancelButton': [{ type: ViewChild, args: ['cancelButton', { read: ElementRef },] },],
         'value': [{ type: Input },],
@@ -55823,7 +55676,6 @@ var Segment = (function (_super) {
     ];
     Segment.propDecorators = {
         'color': [{ type: Input },],
-        'mode': [{ type: Input },],
         'ionChange': [{ type: Output },],
         '_buttons': [{ type: ContentChildren, args: [SegmentButton,] },],
         'disabled': [{ type: Input },],
@@ -61946,7 +61798,6 @@ var Spinner = (function (_super) {
         _super.call(this, config, elementRef, renderer);
         this._dur = null;
         this.paused = false;
-        this.mode = config.get('mode');
     }
     Object.defineProperty(Spinner.prototype, "color", {
         get: function () {
@@ -61954,13 +61805,6 @@ var Spinner = (function (_super) {
         },
         set: function (value) {
             this._setColor('spinner', value);
-        },
-        enumerable: true,
-        configurable: true
-    });
-    Object.defineProperty(Spinner.prototype, "mode", {
-        set: function (val) {
-            this._setMode('spinner', val);
         },
         enumerable: true,
         configurable: true
@@ -62042,7 +61886,6 @@ var Spinner = (function (_super) {
     ];
     Spinner.propDecorators = {
         'color': [{ type: Input },],
-        'mode': [{ type: Input },],
         'name': [{ type: Input },],
         'duration': [{ type: Input },],
         'paused': [{ type: Input },],
@@ -62057,13 +61900,11 @@ var SPINNERS = {
             return {
                 y1: 17,
                 y2: 29,
-                style: (_a = {},
-                    _a[CSS.transform] = 'rotate(' + (30 * index + (index < 6 ? 180 : -180)) + 'deg)',
-                    _a[CSS.animationDelay] = -(dur - ((dur / total) * index)) + 'ms',
-                    _a
-                )
+                style: {
+                    transform: 'rotate(' + (30 * index + (index < 6 ? 180 : -180)) + 'deg)',
+                    animationDelay: -(dur - ((dur / total) * index)) + 'ms'
+                }
             };
-            var _a;
         }
     },
     'ios-small': {
@@ -62073,13 +61914,11 @@ var SPINNERS = {
             return {
                 y1: 12,
                 y2: 20,
-                style: (_a = {},
-                    _a[CSS.transform] = 'rotate(' + (30 * index + (index < 6 ? 180 : -180)) + 'deg)',
-                    _a[CSS.animationDelay] = -(dur - ((dur / total) * index)) + 'ms',
-                    _a
-                )
+                style: {
+                    transform: 'rotate(' + (30 * index + (index < 6 ? 180 : -180)) + 'deg)',
+                    animationDelay: -(dur - ((dur / total) * index)) + 'ms'
+                }
             };
-            var _a;
         }
     },
     bubbles: {
@@ -62088,15 +61927,12 @@ var SPINNERS = {
         fn: function (dur, index, total) {
             return {
                 r: 5,
-                style: (_a = {
-                        top: 9 * Math.sin(2 * Math.PI * index / total),
-                        left: 9 * Math.cos(2 * Math.PI * index / total)
-                    },
-                    _a[CSS.animationDelay] = -(dur - ((dur / total) * index)) + 'ms',
-                    _a
-                )
+                style: {
+                    top: 9 * Math.sin(2 * Math.PI * index / total),
+                    left: 9 * Math.cos(2 * Math.PI * index / total),
+                    animationDelay: -(dur - ((dur / total) * index)) + 'ms'
+                }
             };
-            var _a;
         }
     },
     circles: {
@@ -62105,15 +61941,12 @@ var SPINNERS = {
         fn: function (dur, index, total) {
             return {
                 r: 5,
-                style: (_a = {
-                        top: 9 * Math.sin(2 * Math.PI * index / total),
-                        left: 9 * Math.cos(2 * Math.PI * index / total)
-                    },
-                    _a[CSS.animationDelay] = -(dur - ((dur / total) * index)) + 'ms',
-                    _a
-                )
+                style: {
+                    top: 9 * Math.sin(2 * Math.PI * index / total),
+                    left: 9 * Math.cos(2 * Math.PI * index / total),
+                    animationDelay: -(dur - ((dur / total) * index)) + 'ms'
+                }
             };
-            var _a;
         }
     },
     crescent: {
@@ -62132,14 +61965,11 @@ var SPINNERS = {
         fn: function (dur, index, total) {
             return {
                 r: 6,
-                style: (_a = {
-                        left: (9 - (9 * index))
-                    },
-                    _a[CSS.animationDelay] = -(110 * index) + 'ms',
-                    _a
-                )
+                style: {
+                    left: (9 - (9 * index)),
+                    animationDelay: -(110 * index) + 'ms'
+                }
             };
-            var _a;
         }
     }
 };
@@ -62306,6 +62136,9 @@ var TabButton = (function (_super) {
         this.ionSelect = new EventEmitter();
         this.disHover = (config.get('hoverCSS') === false);
         this.layout = config.get('tabsLayout');
+        if (config.get('tabbarLayout') !== undefined) {
+            this.layout = config.get('tabbarLayout');
+        }
     }
     TabButton.prototype.ngOnInit = function () {
         this.tab.btn = this;
@@ -62498,8 +62331,7 @@ var InputBase = (function (_super) {
     };
     InputBase.prototype.checkHasValue = function (inputValue) {
         if (this._item) {
-            var hasValue = (inputValue !== null && inputValue !== undefined && inputValue !== '');
-            this._item.setElementClass('input-has-value', hasValue);
+            this._item.setElementClass('input-has-value', !!(inputValue && inputValue !== ''));
         }
     };
     InputBase.prototype.focusChange = function (inputHasFocus) {
@@ -62921,17 +62753,14 @@ var TOGGLE_VALUE_ACCESSOR = {
 };
 var Toggle = (function (_super) {
     __extends$138(Toggle, _super);
-    function Toggle(_form, config, elementRef, renderer, _haptic, _item) {
+    function Toggle(_form, config, elementRef, renderer, _item) {
         _super.call(this, config, elementRef, renderer);
         this._form = _form;
-        this._haptic = _haptic;
         this._item = _item;
         this._checked = false;
-        this._init = false;
         this._disabled = false;
         this._activated = false;
         this._msPrv = 0;
-        this._fn = null;
         this._events = new UIEventManager();
         this.ionChange = new EventEmitter();
         this.mode = config.get('mode');
@@ -62968,14 +62797,12 @@ var Toggle = (function (_super) {
             if (this._checked) {
                 if (currentX + 15 < this._startX) {
                     this.onChange(false);
-                    this._haptic.selection();
                     this._startX = currentX;
                     this._activated = true;
                 }
             }
             else if (currentX - 15 > this._startX) {
                 this.onChange(true);
-                this._haptic.selection();
                 this._startX = currentX;
                 this._activated = (currentX < this._startX + 5);
             }
@@ -62987,12 +62814,10 @@ var Toggle = (function (_super) {
             if (this.checked) {
                 if (this._startX + 4 > endX) {
                     this.onChange(false);
-                    this._haptic.selection();
                 }
             }
             else if (this._startX - 4 < endX) {
                 this.onChange(true);
-                this._haptic.selection();
             }
             this._activated = false;
             this._startX = null;
@@ -63022,11 +62847,16 @@ var Toggle = (function (_super) {
         this._setChecked(isTrueProperty(val));
     };
     Toggle.prototype.registerOnChange = function (fn) {
+        var _this = this;
         this._fn = fn;
+        this.onChange = function (isChecked) {
+            // console.debug('toggle, onChange', isChecked);
+            fn(isChecked);
+            _this._setChecked(isChecked);
+            _this.onTouched();
+        };
     };
-    Toggle.prototype.registerOnTouched = function (fn) {
-        this.onTouched = fn;
-    };
+    Toggle.prototype.registerOnTouched = function (fn) { this.onTouched = fn; };
     Object.defineProperty(Toggle.prototype, "disabled", {
         get: function () {
             return this._disabled;
@@ -63039,8 +62869,7 @@ var Toggle = (function (_super) {
         configurable: true
     });
     Toggle.prototype.onChange = function (isChecked) {
-        // console.debug('toggle, onChange', isChecked);
-        this._fn && this._fn(isChecked);
+        // console.debug('toggle, onChange (no ngModel)', isChecked);
         this._setChecked(isChecked);
         this.onTouched();
     };
@@ -63057,7 +62886,6 @@ var Toggle = (function (_super) {
     Toggle.prototype.ngOnDestroy = function () {
         this._form.deregister(this);
         this._events.unlistenAll();
-        this._fn = null;
     };
     Toggle.decorators = [
         { type: Component, args: [{
@@ -63086,7 +62914,6 @@ var Toggle = (function (_super) {
         { type: Config, },
         { type: ElementRef, },
         { type: Renderer, },
-        { type: Haptic, },
         { type: Item, decorators: [{ type: Optional },] },
     ];
     Toggle.propDecorators = {
@@ -63203,7 +63030,7 @@ var Typography = (function (_super) {
     });
     Typography.decorators = [
         { type: Directive, args: [{
-                    selector: 'h1[color], h2[color], h3[color], h4[color], h5[color], h6[color], a[color]:not([ion-button]), p[color], span[color], b[color], i[color], strong[color], em[color], small[color], sub[color], sup[color]'
+                    selector: 'h1[color], h2[color], h3[color], h4[color], h5[color], h6[color], a[color], p[color], span[color], b[color], i[color], strong[color], em[color], small[color], sub[color], sup[color]'
                 },] },
     ];
     Typography.ctorParameters = [
@@ -63754,15 +63581,15 @@ var VirtualScroll = (function () {
                 throw 'virtualItem required within virtualScroll';
             }
             this._init = true;
-            if (!this.approxItemHeight) {
-                this.approxItemHeight = '40px';
-                console.warn('Virtual Scroll: Please provide an "approxItemHeight" input to ensure proper virtual scroll rendering');
-            }
             this.update(true);
             this._platform.onResize(function () {
                 // console.debug('VirtualScroll, onResize');
                 _this.update(false);
             });
+            if (!this.approxItemHeight) {
+                this.approxItemHeight = '40px';
+                console.warn('Virtual Scroll: Please provide an "approxItemHeight" input to ensure proper virtual scroll rendering');
+            }
         }
     };
     VirtualScroll.prototype.update = function (checkChanges) {
@@ -64114,7 +63941,6 @@ var IONIC_DIRECTIVES = [
     Tab,
     Tabs,
     TabButton,
-    TabHighlight,
     TextArea,
     TextInput,
     Thumbnail,
@@ -64161,7 +63987,6 @@ var IonicModule = (function () {
                 App,
                 Events,
                 Form,
-                Haptic,
                 GestureController,
                 Keyboard,
                 LoadingController,
